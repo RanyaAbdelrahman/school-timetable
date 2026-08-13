@@ -1,82 +1,128 @@
 import streamlit as st
 import pandas as pd
 from ortools.sat.python import cp_model
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-# إعدادات صفحة ستريمليت
+# إعدادات الصفحة
 st.set_page_config(
     page_title="نظام توليد الجداول المدرسية الآلي",
     page_icon="🏫",
     layout="centered"
 )
 
-# تنسيقات CSS للواجهة
+# تنسيقات CSS احترافية بألوان مبهجة وعصرية
 st.markdown("""
     <style>
-    .main-title {
-        text-align: center;
-        color: #1F4E78;
-        font-weight: 700;
-        margin-bottom: 5px;
+    .stApp {
+        background: linear-gradient(135deg, #f0f4f8 0%, #d9e2ec 100%);
+        font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
     }
-    .sub-desc {
+    
+    /* ترويسة رئيسية مبهجة ومميزة */
+    .main-header {
+        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+        padding: 35px;
+        border-radius: 20px;
+        color: white;
         text-align: center;
-        color: #595959;
+        box-shadow: 0 10px 25px rgba(99, 102, 241, 0.3);
+        margin-bottom: 25px;
+    }
+    .main-header h1 {
+        font-size: 30px;
+        font-weight: 800;
+        margin-bottom: 10px;
+        color: #ffffff;
+    }
+    .main-header p {
         font-size: 16px;
-        margin-bottom: 30px;
+        color: #f3e8ff;
+        margin: 0;
     }
+
+    /* حقول الإدخال */
+    .stTextInput > div > div > input {
+        border-radius: 12px;
+        border: 2px solid #cbd5e1;
+        padding: 12px;
+        font-size: 16px;
+        background-color: #ffffff;
+        transition: all 0.3s ease;
+    }
+    .stTextInput > div > div > input:focus {
+        border-color: #6366f1;
+        box-shadow: 0 0 10px rgba(99, 102, 241, 0.25);
+    }
+
+    /* زر التوليد البارز والملون */
+    .stButton > button {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+        font-weight: 700;
+        font-size: 18px;
+        padding: 14px 20px;
+        border-radius: 14px;
+        border: none;
+        box-shadow: 0 6px 15px rgba(16, 185, 129, 0.35);
+        transition: all 0.3s ease;
+    }
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #059669 0%, #047857 100%);
+        box-shadow: 0 8px 20px rgba(16, 185, 129, 0.5);
+        transform: translateY(-2px);
+    }
+
+    /* تذييل الصفحة */
     .footer {
         position: fixed;
         left: 0;
         bottom: 0;
         width: 100%;
-        background-color: #f8f9fa;
-        color: #1F4E78;
+        background-color: #ffffff;
+        color: #4f46e5;
         text-align: center;
-        padding: 10px;
+        padding: 12px;
         font-weight: bold;
-        border-top: 1px solid #e7e7e7;
+        border-top: 2px solid #e2e8f0;
         font-size: 14px;
+        box-shadow: 0 -4px 10px rgba(0,0,0,0.05);
+        z-index: 100;
     }
     </style>
 """, unsafe_allow_html=True)
 
 def clean_off_days(value):
-    if pd.isna(value):
-        return []
+    if pd.isna(value): return []
     text = str(value).strip()
-    if not text:
-        return []
+    if not text: return []
     text = text.replace("،", ",")
     result = []
     for day in text.split(","):
         day = day.strip()
-        if day and day not in result:
-            result.append(day)
+        if day and day not in result: result.append(day)
     return result
 
 def format_excel_workbook(file_path, school_name):
     wb = load_workbook(file_path)
-    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
     header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-    empty_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    empty_fill = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
     data_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-    off_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
-    school_title_font = Font(name="Segoe UI", size=15, bold=True, color="1F4E78")
-    section_title_font = Font(name="Segoe UI", size=13, bold=True, color="000000")
+    off_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    school_title_font = Font(name="Segoe UI", size=15, bold=True, color="4F46E5")
+    section_title_font = Font(name="Segoe UI", size=13, bold=True, color="1E293B")
     cell_font = Font(name="Segoe UI", size=10, bold=True, color="000000")
-    day_font = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
+    day_font = Font(name="Segoe UI", size=11, bold=True, color="4F46E5")
     center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    thin_side = Side(style="thin", color="BFBFBF")
-    med_side = Side(style="medium", color="1F4E78")
+    thin_side = Side(style="thin", color="E2E8F0")
+    med_side = Side(style="medium", color="6366F1")
     cell_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
     for sheetname in wb.sheetnames:
         ws = wb[sheetname]
         ws.views.sheetView[0].showGridLines = True
-        
         ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
         ws.page_setup.paperSize = ws.PAPERSIZE_A4
         ws.sheet_properties.pageSetUpPr.fitToPage = True
@@ -85,10 +131,16 @@ def format_excel_workbook(file_path, school_name):
 
         if sheetname in ["Master_Schedule", "كشف_المعلمين"]:
             ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+            ws.sheet_view.rightToLeft = True
             for cell in ws[1]:
                 cell.fill = header_fill
                 cell.font = header_font
                 cell.alignment = center_align
+            continue
+
+        if sheetname == "جداول_جميع_الفصول":
+            ws.sheet_view.rightToLeft = True
+            ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
             continue
 
         df_sheet = pd.read_excel(file_path, sheet_name=sheetname)
@@ -131,33 +183,42 @@ def format_excel_workbook(file_path, school_name):
                 cell.fill = data_fill
                 if c_idx == 1:
                     cell.font = day_font
-                    cell.fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+                    cell.fill = PatternFill(start_color="EEF2FF", end_color="EEF2FF", fill_type="solid")
                 val_str = str(cell.value or "")
                 if val_str in ["فراغ", "راحة", "متاحة", "None", ""]:
                     cell.fill = empty_fill
-                    cell.font = Font(name="Segoe UI", size=10, italic=True, color="7F7F7F")
+                    cell.font = Font(name="Segoe UI", size=10, italic=True, color="94A3B8")
                 elif "إجازة" in val_str or "OFF" in val_str:
                     cell.fill = off_fill
-                    cell.font = Font(name="Segoe UI", size=10, bold=True, color="C00000")
+                    cell.font = Font(name="Segoe UI", size=10, bold=True, color="DC2626")
 
         for col in ws.columns:
             max_len = max(len(str(line)) for cell in col for line in str(cell.value or "").split("\n"))
             ws.column_dimensions[get_column_letter(col[0].column)].width = max(max_len + 5, 18)
     wb.save(file_path)
 
-# واجهة التطبيق
-st.markdown("<h1 class='main-title'>🏫 نظام توليد الجداول المدرسية الآلي</h1>", unsafe_allow_html=True)
-st.markdown("<p class='sub-desc'>أدخلي اسم المدرسة وارفعي ملف الإدخال بصيغة Excel (inputs.xlsx) لتوليد الجداول باحترافية.</p>", unsafe_allow_html=True)
+# الترويسة
+st.markdown("""
+    <div class="main-header">
+        <h1>🏫 نظام توليد الجداول المدرسية الآلي</h1>
+        <p> Code Wonders Academy </p>
+    </div>
+""", unsafe_allow_html=True)
 
-school_input_name = st.text_input("📝 اسم المدرسة (ليظهر في ترويسة الجداول)", value="")
+school_input_name = st.text_input("📝 اسم المدرسة", value="")
 uploaded_file = st.file_uploader("📂 اختر ملف البيانات بصيغة Excel (inputs.xlsx)", type=["xlsx"])
 
+# استخدام session_state لحفظ حالة النجاح لكي لا تختفي عند الضغط على التحميل
+if "generated" not in st.session_state:
+    st.session_state.generated = False
+
 if uploaded_file is not None:
-    if st.button("🚀 ابدأ توليد الجدول الآن", use_container_width=True):
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🚀 ابدأ توليد الجداول والملفات الآن", use_container_width=True):
         if not school_input_name.strip():
             st.warning("⚠️ تنبيه: يرجى كتابة اسم المدرسة أولاً ليظهر في ترويسة ملفات الإكسل الناتجة.")
         else:
-            with st.spinner("جاري معالجة البيانات وتوليد الجداول بدقة، يرجى الانتظار..."):
+            with st.spinner("✨ جاري معالجة البيانات وبناء الجداول بدقة ذكية، يرجى الانتظار..."):
                 try:
                     df_teachers = pd.read_excel(uploaded_file, sheet_name="Teachers")
                     df_classes = pd.read_excel(uploaded_file, sheet_name="Classes")
@@ -228,7 +289,6 @@ if uploaded_file is not None:
                                     for p in range(num_periods):
                                         model.Add(schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, p)] == 0)
 
-                    # قيد منع حصص التربية الرياضية (PE) أو الأنشطة الخاصة بالملعب في الحصة الأخيرة
                     last_period_idx = num_periods - 1
                     for item in clean_assignments:
                         if "PE" in item["s"].upper() or "ملعب" in item["r"]:
@@ -249,6 +309,84 @@ if uploaded_file is not None:
 
                         df_result = pd.DataFrame(output_data)
                         out_file = "final_timetable.xlsx"
+                        master_table_file = "all_classes_master_table.xlsx"
+
+                        wb_master = Workbook()
+                        ws_master = wb_master.active
+                        ws_master.title = "الحصص_الشامل"
+                        ws_master.sheet_view.rightToLeft = True
+                        ws_master.views.sheetView[0].showGridLines = True
+
+                        thin_border = Border(left=Side(style="thin", color="E2E8F0"), right=Side(style="thin", color="E2E8F0"), top=Side(style="thin", color="E2E8F0"), bottom=Side(style="thin", color="E2E8F0"))
+                        header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
+                        sub_header_fill = PatternFill(start_color="818CF8", end_color="818CF8", fill_type="solid")
+                        title_fill = PatternFill(start_color="EEF2FF", end_color="EEF2FF", fill_type="solid")
+                        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+                        ws_master.merge_cells("A1:V1")
+                        title_cell = ws_master.cell(row=1, column=1, value=f"{school_input_name} - جدول الحصص المدرسي الشامل لجميع الفصول")
+                        title_cell.font = Font(name="Segoe UI", size=14, bold=True, color="4F46E5")
+                        title_cell.alignment = center_align
+                        title_cell.fill = title_fill
+                        ws_master.row_dimensions[1].height = 40
+
+                        ws_master.cell(row=3, column=1, value="م").font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+                        ws_master.cell(row=3, column=1).alignment = center_align
+                        ws_master.cell(row=3, column=1).fill = header_fill
+                        ws_master.merge_cells("A3:A4")
+
+                        ws_master.cell(row=3, column=2, value="اسم الفصل").font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+                        ws_master.cell(row=3, column=2).alignment = center_align
+                        ws_master.cell(row=3, column=2).fill = header_fill
+                        ws_master.merge_cells("B3:B4")
+
+                        current_col = 3
+                        for day in days:
+                            start_c = current_col
+                            end_c = current_col + len(periods) - 1
+                            ws_master.merge_cells(start_row=3, start_column=start_c, end_row=3, end_column=end_c)
+                            day_cell = ws_master.cell(row=3, column=start_c, value=day)
+                            day_cell.font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+                            day_cell.alignment = center_align
+                            day_cell.fill = header_fill
+
+                            for p_idx, p in enumerate(periods):
+                                p_cell = ws_master.cell(row=4, column=start_c + p_idx, value=p)
+                                p_cell.font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+                                p_cell.alignment = center_align
+                                p_cell.fill = sub_header_fill
+                            current_col += len(periods)
+
+                        for idx, cls in enumerate(sorted(list(classes)), start=1):
+                            row_num = 5 + idx - 1
+                            ws_master.row_dimensions[row_num].height = 35
+                            row_fill = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid") if idx % 2 == 0 else PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+
+                            ws_master.cell(row=row_num, column=1, value=idx).alignment = center_align
+                            ws_master.cell(row=row_num, column=2, value=str(cls)).alignment = center_align
+
+                            col_cursor = 3
+                            for day in days:
+                                for p in periods:
+                                    match = df_result[(df_result["الفصل"] == cls) & (df_result["اليوم"] == day) & (df_result["الحصة"] == p)]
+                                    if not match.empty:
+                                        mat = match.iloc[0]["المادة"]
+                                        tch = match.iloc[0].get("المدرس", "")
+                                        cell_val = f"{mat}\n({tch})" if tch else mat
+                                    else:
+                                        cell_val = "متاحة"
+                                    cell = ws_master.cell(row=row_num, column=col_cursor, value=cell_val)
+                                    cell.alignment = center_align
+                                    cell.border = thin_border
+                                    cell.fill = row_fill
+                                    cell.font = Font(name="Segoe UI", size=8)
+                                    col_cursor += 1
+
+                        for col in ws_master.columns:
+                            max_len = max(len(str(line)) for cell in col for line in str(cell.value or "").split("\n"))
+                            ws_master.column_dimensions[get_column_letter(col[0].column)].width = max(max_len + 4, 15)
+
+                        wb_master.save(master_table_file)
 
                         with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
                             df_result.to_excel(writer, sheet_name="Master_Schedule", index=False)
@@ -257,10 +395,22 @@ if uploaded_file is not None:
                             for _, row in df_result.iterrows():
                                 for teacher in [t.strip() for t in str(row["المدرس"]).split("/") if t.strip()]:
                                     summary_rows.append({"المعلم/ة": teacher, "الحصة": 1})
+                            
                             if summary_rows:
                                 df_summary = pd.DataFrame(summary_rows).groupby("المعلم/ة")["الحصة"].sum().reset_index()
                                 df_summary.columns = ["المعلم/ة", "إجمالي الحصص الأسبوعية"]
+                                
+                                teacher_subjects = {}
+                                for t in teachers:
+                                    subs = df_result[df_result["المدرس"].apply(lambda x: t in [i.strip() for i in str(x).split("/")])]["المادة"].dropna().unique().tolist()
+                                    teacher_subjects[t] = ", ".join(subs)
+                                
+                                df_summary["المواد الدراسية"] = df_summary["المعلم/ة"].map(teacher_subjects)
                                 df_summary.to_excel(writer, sheet_name="كشف_المعلمين", index=False)
+
+                                wb = writer.book
+                                ws_teachers = wb["كشف_المعلمين"]
+                                ws_teachers.sheet_view.rightToLeft = True
 
                             for c in classes:
                                 df_c = df_result[df_result["الفصل"].apply(lambda x: c in [i.strip() for i in str(x).split(",")])]
@@ -296,23 +446,39 @@ if uploaded_file is not None:
                                 pivot_r.to_excel(writer, sheet_name=f"قاعة_{r}")
 
                         format_excel_workbook(out_file, school_input_name)
-
-                        st.success("✅ تم توليد الجدول وتطبيق شرط منع حصص PE في الحصة الأخيرة بنجاح!")
-                        
-                        with open(out_file, "rb") as f:
-                            st.download_button(
-                                label="📥 تحميل ملف الجداول النهائية (Excel)",
-                                data=f,
-                                file_name="final_timetable.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
-                            )
+                        st.session_state.generated = True
                     else:
                         st.error("❌ لم يتمكن البرنامج من توليد الجدول بسبب وجود قيود متضاربة في ملف الإدخال.")
                 except Exception as e:
                     st.error(f"حدث خطأ أثناء المعالجة: {e}")
 
-# تذييل الصفحة الاحترافي
+# عرض رسالة النجاح وأزرار التحميل بشكل ثابت دائماً إذا تم التوليد بنجاح
+if st.session_state.generated:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.success("🎉 تم توليد الجداول وملف الحصص الشامل بنجاح واحترافية عالية!")
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        with open("final_timetable.xlsx", "rb") as f:
+            st.download_button(
+                label="📥 تحميل الجداول النهائية",
+                data=f,
+                file_name="final_timetable.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+    with col2:
+        with open("all_classes_master_table.xlsx", "rb") as f:
+            st.download_button(
+                label="📥 تحميل ملف الحصص الشامل",
+                data=f,
+                file_name="all_classes_master_table.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+# التذييل
 st.markdown("""
     <div class='footer'>
         Code Wonders Academy &nbsp;|&nbsp; ☎️ 01060572506
