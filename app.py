@@ -294,7 +294,198 @@ if uploaded_file is not None:
                         if "PE" in item["s"].upper() or "ملعب" in item["r"]:
                             for d in range(num_days):
                                 model.Add(schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, last_period_idx)] == 0)
+# ========================================================
+# ⭐ OBJECTIVE - تحسين جودة الجدول
+# ========================================================
 
+objective_terms = []
+
+
+# ========================================================
+# ⭐ 1. عدالة توزيع كل مادة على أيام الأسبوع داخل الفصل
+#
+# مثال:
+# عربي 5 حصص
+#
+# سيئ:
+# 4 - 1 - 0 - 0 - 0
+#
+# أفضل:
+# 2 - 1 - 1 - 1 - 0
+#
+# ممتاز:
+# 1 - 1 - 1 - 1 - 1
+#
+# هذا Soft Constraint:
+# لا يمنع الحل، وإنما يعاقب التوزيع غير العادل.
+# ========================================================
+
+SUBJECT_DISTRIBUTION_PENALTY = 40
+
+class_subject_groups = {}
+
+for item in clean_assignments:
+
+    class_names = [
+        x.strip()
+        for x in item["c"].split(",")
+        if x.strip()
+    ]
+
+    for class_name in class_names:
+
+        key = (class_name, item["s"])
+
+        if key not in class_subject_groups:
+            class_subject_groups[key] = []
+
+        class_subject_groups[key].append(item)
+
+
+for (class_name, subject), items in class_subject_groups.items():
+
+    daily_load = {}
+
+    for d in range(num_days):
+
+        lesson_vars = []
+
+        for item in items:
+
+            item_classes = [
+                x.strip()
+                for x in item["c"].split(",")
+                if x.strip()
+            ]
+
+            if class_name not in item_classes:
+                continue
+
+            for p in range(num_periods):
+
+                lesson_vars.append(
+                    schedule[
+                        (
+                            item["idx"],
+                            item["c"],
+                            item["s"],
+                            item["t"],
+                            item["r"],
+                            d,
+                            p,
+                        )
+                    ]
+                )
+
+        daily_load[d] = model.NewIntVar(
+            0,
+            len(lesson_vars),
+            f"subject_load_{class_name}_{subject}_{d}"
+        )
+
+        if lesson_vars:
+            model.Add(
+                daily_load[d] == sum(lesson_vars)
+            )
+        else:
+            model.Add(
+                daily_load[d] == 0
+            )
+
+    # ----------------------------------------------------
+    # مقارنة توزيع المادة بين كل يومين
+    # ----------------------------------------------------
+
+    for d1 in range(num_days):
+
+        for d2 in range(d1 + 1, num_days):
+
+            difference = model.NewIntVar(
+                0,
+                num_periods * len(items),
+                f"subject_diff_{class_name}_{subject}_{d1}_{d2}"
+            )
+
+            model.AddAbsEquality(
+                difference,
+                daily_load[d1] - daily_load[d2]
+            )
+
+            # كلما زاد الفرق زادت العقوبة
+            objective_terms.append(
+                difference * (-SUBJECT_DISTRIBUTION_PENALTY)
+            )
+
+
+# ========================================================
+# ⭐ 2. تفضيل الحصص المبكرة
+#
+# الحصة الأولى أفضل من السابعة
+# ========================================================
+
+EARLY_PERIOD_WEIGHT = 10
+
+for key, var in schedule.items():
+
+    p = key[-1]
+
+    weight = (num_periods - p) * EARLY_PERIOD_WEIGHT
+
+    objective_terms.append(
+        var * weight
+    )
+
+
+# ========================================================
+# ⭐ 3. تقليل الحصص المتتالية لنفس المادة/Assignment
+# ========================================================
+
+CONSECUTIVE_PENALTY = 5
+
+for item in clean_assignments:
+
+    idx = item["idx"]
+    c = item["c"]
+    s = item["s"]
+    t = item["t"]
+    r = item["r"]
+
+    for d in range(num_days):
+
+        for p in range(num_periods - 1):
+
+            current_var = schedule[
+                (idx, c, s, t, r, d, p)
+            ]
+
+            next_var = schedule[
+                (idx, c, s, t, r, d, p + 1)
+            ]
+
+            both_lessons = model.NewBoolVar(
+                f"both_{idx}_{d}_{p}"
+            )
+
+            model.Add(both_lessons <= current_var)
+            model.Add(both_lessons <= next_var)
+
+            model.Add(
+                both_lessons >=
+                current_var + next_var - 1
+            )
+
+            objective_terms.append(
+                both_lessons * (-CONSECUTIVE_PENALTY)
+            )
+
+
+# ========================================================
+# ⭐ الهدف النهائي
+# ========================================================
+
+model.Maximize(
+    sum(objective_terms)
+)
                     solver = cp_model.CpSolver()
                     solver.parameters.max_time_in_seconds = 60.0
                     status = solver.Solve(model)
