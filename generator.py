@@ -640,7 +640,134 @@ def generate_timetable():
 
     if late_vars:
       model.Add(sum(late_vars) <= max_allowed_late)
+# ========================================================
+# ⭐ SOFT CONSTRAINT
+# عدالة توزيع المادة داخل الفصل على أيام الأسبوع
+#
+# الهدف:
+# منع توزيع مثل:
+# عربي = 4 حصص يوم + 1 حصة يوم آخر
+#
+# مع السماح بذلك إذا كان ضرورياً للحل.
+# ========================================================
 
+SUBJECT_DISTRIBUTION_PENALTY = 30
+
+# --------------------------------------------------------
+# تجميع Assignments حسب:
+# الفصل + المادة
+#
+# مهم جداً:
+# لا نعتمد على Assignment واحد فقط،
+# لأن المادة قد يكون لها أكثر من Assignment.
+# --------------------------------------------------------
+
+class_subject_groups = {}
+
+for item in clean_assignments:
+
+    class_names = [
+        x.strip()
+        for x in item["c"].split(",")
+        if x.strip()
+    ]
+
+    for class_name in class_names:
+
+        key = (class_name, item["s"])
+
+        if key not in class_subject_groups:
+            class_subject_groups[key] = []
+
+        class_subject_groups[key].append(item)
+
+
+# --------------------------------------------------------
+# حساب عدد حصص المادة لكل يوم
+# --------------------------------------------------------
+
+for (class_name, subject), items in class_subject_groups.items():
+
+    daily_load = {}
+
+    for d in range(num_days):
+
+        lesson_vars = []
+
+        for item in items:
+
+            idx = item["idx"]
+            c = item["c"]
+            s = item["s"]
+            t = item["t"]
+            r = item["r"]
+
+            # نتأكد أن الـ Assignment يخص هذا الفصل
+            item_classes = [
+                x.strip()
+                for x in c.split(",")
+                if x.strip()
+            ]
+
+            if class_name in item_classes:
+
+                for p in range(num_periods):
+
+                    lesson_vars.append(
+                        schedule[
+                            (
+                                idx,
+                                c,
+                                s,
+                                t,
+                                r,
+                                d,
+                                p,
+                            )
+                        ]
+                    )
+
+        # عدد حصص المادة لهذا الفصل في هذا اليوم
+        daily_load[d] = model.NewIntVar(
+            0,
+            len(lesson_vars),
+            f"subject_load_{class_name}_{subject}_{d}"
+        )
+
+        if lesson_vars:
+            model.Add(
+                daily_load[d] == sum(lesson_vars)
+            )
+        else:
+            model.Add(daily_load[d] == 0)
+
+    # ----------------------------------------------------
+    # ⭐ مقارنة كل يوم مع كل يوم
+    #
+    # كلما زاد الفرق بين عدد الحصص في يومين
+    # زادت العقوبة.
+    # ----------------------------------------------------
+
+    for d1 in range(num_days):
+
+        for d2 in range(d1 + 1, num_days):
+
+            difference = model.NewIntVar(
+                0,
+                num_periods * len(items),
+                f"subject_diff_{class_name}_{subject}_{d1}_{d2}"
+            )
+
+            model.AddAbsEquality(
+                difference,
+                daily_load[d1] - daily_load[d2]
+            )
+
+            # Soft Constraint:
+            # نقلل الفروق بين الأيام
+            objective_terms.append(
+                difference * (-SUBJECT_DISTRIBUTION_PENALTY)
+            )
   # ========================================================
   # Objective
   # ========================================================
