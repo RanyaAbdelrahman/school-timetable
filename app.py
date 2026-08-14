@@ -20,7 +20,6 @@ st.markdown("""
         font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
     }
     
-    /* ترويسة رئيسية مبهجة ومميزة */
     .main-header {
         background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
         padding: 35px;
@@ -42,7 +41,6 @@ st.markdown("""
         margin: 0;
     }
 
-    /* حقول الإدخال */
     .stTextInput > div > div > input {
         border-radius: 12px;
         border: 2px solid #cbd5e1;
@@ -56,7 +54,6 @@ st.markdown("""
         box-shadow: 0 0 10px rgba(99, 102, 241, 0.25);
     }
 
-    /* زر التوليد البارز والملون */
     .stButton > button {
         background: linear-gradient(135deg, #10b981 0%, #059669 100%);
         color: white;
@@ -74,7 +71,6 @@ st.markdown("""
         transform: translateY(-2px);
     }
 
-    /* تذييل الصفحة */
     .footer {
         position: fixed;
         left: 0;
@@ -208,7 +204,6 @@ st.markdown("""
 school_input_name = st.text_input("📝 اسم المدرسة", value="")
 uploaded_file = st.file_uploader("📂 اختر ملف البيانات بصيغة Excel (inputs.xlsx)", type=["xlsx"])
 
-# استخدام session_state لحفظ حالة النجاح لكي لا تختفي عند الضغط على التحميل
 if "generated" not in st.session_state:
     st.session_state.generated = False
 
@@ -296,55 +291,16 @@ if uploaded_file is not None:
                                 model.Add(schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, last_period_idx)] == 0)
 
                     # ========================================================
-                    # ⭐ OBJECTIVE - تحسين جودة الجدول
+                    # ⭐ OBJECTIVE - محسّن وسريع للغاية
                     # ========================================================
-
                     objective_terms = []
 
-                    # 1. عدالة توزيع كل مادة على أيام الأسبوع داخل الفصل
-                    SUBJECT_DISTRIBUTION_PENALTY = 40
-                    class_subject_groups = {}
-
-                    for item in clean_assignments:
-                        class_names = [x.strip() for x in item["c"].split(",") if x.strip()]
-                        for class_name in class_names:
-                            key = (class_name, item["s"])
-                            if key not in class_subject_groups:
-                                class_subject_groups[key] = []
-                            class_subject_groups[key].append(item)
-
-                    for (class_name, subject), items in class_subject_groups.items():
-                        daily_load = {}
-                        for d in range(num_days):
-                            lesson_vars = []
-                            for item in items:
-                                item_classes = [x.strip() for x in item["c"].split(",") if x.strip()]
-                                if class_name not in item_classes:
-                                    continue
-                                for p in range(num_periods):
-                                    lesson_vars.append(schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, p)])
-
-                            daily_load[d] = model.NewIntVar(0, len(lesson_vars), f"subject_load_{class_name}_{subject}_{d}")
-                            if lesson_vars:
-                                model.Add(daily_load[d] == sum(lesson_vars))
-                            else:
-                                model.Add(daily_load[d] == 0)
-
-                        for d1 in range(num_days):
-                            for d2 in range(d1 + 1, num_days):
-                                difference = model.NewIntVar(0, num_periods * len(items), f"subject_diff_{class_name}_{subject}_{d1}_{d2}")
-                                model.AddAbsEquality(difference, daily_load[d1] - daily_load[d2])
-                                objective_terms.append(difference * (-SUBJECT_DISTRIBUTION_PENALTY))
-
-                    # 2. تفضيل الحصص المبكرة
-                    EARLY_PERIOD_WEIGHT = 10
+                    # 1. تفضيل الحصص المبكرة
                     for key, var in schedule.items():
                         p = key[-1]
-                        weight = (num_periods - p) * EARLY_PERIOD_WEIGHT
-                        objective_terms.append(var * weight)
+                        objective_terms.append(var * (num_periods - p) * 10)
 
-                    # 3. تقليل الحصص المتتالية لنفس المادة/Assignment
-                    CONSECUTIVE_PENALTY = 5
+                    # 2. تفضيل توزيع المواد على أيام مختلفة (توزيع عادل وسريع التنفيذ)
                     for item in clean_assignments:
                         idx = item["idx"]
                         c = item["c"]
@@ -353,22 +309,16 @@ if uploaded_file is not None:
                         r = item["r"]
 
                         for d in range(num_days):
-                            for p in range(num_periods - 1):
-                                current_var = schedule[(idx, c, s, t, r, d, p)]
-                                next_var = schedule[(idx, c, s, t, r, d, p + 1)]
+                            day_has_subject = model.NewBoolVar(f"day_has_{idx}_{d}")
+                            day_lessons = [schedule[(idx, c, s, t, r, d, p)] for p in range(num_periods)]
+                            model.Add(sum(day_lessons) >= 1).OnlyEnforceIf(day_has_subject)
+                            model.Add(sum(day_lessons) == 0).OnlyEnforceIf(day_has_subject.Not())
+                            objective_terms.append(day_has_subject * 50)
 
-                                both_lessons = model.NewBoolVar(f"both_{idx}_{d}_{p}")
-                                model.Add(both_lessons <= current_var)
-                                model.Add(both_lessons <= next_var)
-                                model.Add(both_lessons >= current_var + next_var - 1)
-
-                                objective_terms.append(both_lessons * (-CONSECUTIVE_PENALTY))
-
-                    # الهدف النهائي
                     model.Maximize(sum(objective_terms))
 
                     solver = cp_model.CpSolver()
-                    solver.parameters.max_time_in_seconds = 60.0
+                    solver.parameters.max_time_in_seconds = 30.0
                     status = solver.Solve(model)
 
                     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -524,7 +474,6 @@ if uploaded_file is not None:
                 except Exception as e:
                     st.error(f"حدث خطأ أثناء المعالجة: {e}")
 
-# عرض رسالة النجاح وأزرار التحميل بشكل ثابت دائماً إذا تم التوليد بنجاح
 if st.session_state.generated:
     st.markdown("<br>", unsafe_allow_html=True)
     st.success("🎉 تم توليد الجداول وملف الحصص الشامل بنجاح واحترافية عالية!")
@@ -550,7 +499,6 @@ if st.session_state.generated:
                 use_container_width=True
             )
 
-# التذييل
 st.markdown("""
     <div class='footer'>
         Code Wonders Academy &nbsp;|&nbsp; ☎️ 01060572506
