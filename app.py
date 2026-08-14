@@ -200,7 +200,7 @@ def format_excel_workbook(file_path, school_name):
 # الترويسة
 st.markdown("""
     <div class="main-header">
-        <h1>🏫 نظام توليد الجداول المدرسية الآلي</h1>
+        <h1> ⭐ نظام الإدارة الذكية للجداول المدرسية ⭐ </h1>
         <p> Code Wonders Academy </p>
     </div>
 """, unsafe_allow_html=True)
@@ -214,11 +214,11 @@ if "generated" not in st.session_state:
 
 if uploaded_file is not None:
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🚀 ابدأ توليد الجداول والملفات الآن", use_container_width=True):
+    if st.button("🚀 إنشاء الجدول المدرسي ", use_container_width=True):
         if not school_input_name.strip():
             st.warning("⚠️ تنبيه: يرجى كتابة اسم المدرسة أولاً ليظهر في ترويسة ملفات الإكسل الناتجة.")
         else:
-            with st.spinner("✨ جاري معالجة البيانات وبناء الجداول بدقة ذكية، يرجى الانتظار..."):
+            with st.spinner("✨ جاري معالجة البيانات وبناء الجداول بدقة، يرجى الانتظار..."):
                 try:
                     df_teachers = pd.read_excel(uploaded_file, sheet_name="Teachers")
                     df_classes = pd.read_excel(uploaded_file, sheet_name="Classes")
