@@ -7,7 +7,7 @@ from openpyxl.utils import get_column_letter
 
 # إعدادات الصفحة
 st.set_page_config(
-    page_title="نظام توليد الجداول المدرسية الآلي",
+    page_title="⭐ نظام الإدارة الذكية للجداول المدرسية ⭐",
     page_icon="🏫",
     layout="centered"
 )
