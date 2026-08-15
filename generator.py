@@ -48,7 +48,21 @@ def clean_off_days(value):
 
   return result
 
-
+def clean_unwanted_periods(value):
+  if pd.isna(value):
+    return []
+  text = str(value).strip()
+  if not text:
+    return []
+  text = text.replace("،", ",")
+  result = []
+  for p in text.split(","):
+    p = p.strip()
+    if p.isdigit():
+      val = int(p)
+      if val not in result:
+        result.append(val)
+  return result
 # ============================================================
 # تنسيق ملف Excel
 # ============================================================
@@ -304,9 +318,9 @@ def generate_timetable():
   # OffDays
   # ========================================================
 
-  teacher_off_days = {}
-
+teacher_off_days = {}
   teacher_max_off_days = {}
+  teacher_unwanted_periods = {}  # ⭐ أضيفي هذا القاموس الجديد
 
   for _, row in df_teachers.iterrows():
     if pd.isna(row["Teacher"]):
@@ -316,10 +330,22 @@ def generate_timetable():
 
     if "OffDays" in df_teachers.columns:
       off_days = clean_off_days(row["OffDays"])
-
     else:
       off_days = []
 
+    valid_off_days = []
+    for off_day in off_days:
+      if off_day in days:
+        valid_off_days.append(off_day)
+    teacher_off_days[teacher_name] = valid_off_days
+
+    # ⭐ قراءة الحصص غير المفضلة (ساعات الرضاعة)
+    if "UnwantedPeriods" in df_teachers.columns:
+      teacher_unwanted_periods[teacher_name] = clean_unwanted_periods(
+          row["UnwantedPeriods"]
+      )
+    else:
+      teacher_unwanted_periods[teacher_name] = []
     # ----------------------------------------------------
     # التأكد من أن اليوم موجود
     # ----------------------------------------------------
@@ -896,7 +922,32 @@ for (class_name, subject), items in class_subject_groups.items():
   # ========================================================
   # Objective
   # ========================================================
+# ========================================================
+# ⭐ تفادي الحصص غير المفضلة للمعلمين (ساعات الرضاعة - Soft Constraint)
+# ========================================================
+UNWANTED_PERIOD_PENALTY = 40
 
+for item in clean_assignments:
+  idx = item["idx"]
+  c = item["c"]
+  s = item["s"]
+  t = item["t"]
+  r = item["r"]
+
+  assignment_teachers = [x.strip() for x in t.split("/") if x.strip()]
+
+  for teacher_name in assignment_teachers:
+    unwanted_ps = teacher_unwanted_periods.get(teacher_name, [])
+
+    if unwanted_ps:
+      for d in range(num_days):
+        for p in range(num_periods):
+          period_number = p + 1
+
+          if period_number in unwanted_ps:
+            objective_terms.append(
+                schedule[(idx, c, s, t, r, d, p)] * (-UNWANTED_PERIOD_PENALTY)
+            )
   model.Maximize(sum(objective_terms))
 
   # ========================================================
