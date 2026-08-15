@@ -77,7 +77,7 @@ def format_excel_workbook(file_path, school_name):
                         cell.fill = off_fill
     wb.save(file_path)
 
-# الواجهة
+# واجهة المستخدم
 st.markdown("<div class='main-header'><h1>⭐ نظام الإدارة الذكية للجداول المدرسية ⭐</h1><p>Code Wonders Academy</p></div>", unsafe_allow_html=True)
 school_input_name = st.text_input("📝 اسم المدرسة", value="")
 uploaded_file = st.file_uploader("📂 اختر ملف البيانات (inputs.xlsx)", type=["xlsx"])
@@ -138,7 +138,7 @@ if uploaded_file is not None and st.button("🚀 إنشاء الجدول الم�
                     if t_vars: 
                         model.Add(sum(t_vars) <= 1)
 
-        # منع الحصص في أيام الإجازة
+        # منع الحصص في أيام الإجازة الخاصة بالمعلمين
         for item in clean_assignments:
             for t_name in [x.strip() for x in item["t"].split("/")]:
                 for d, day_name in enumerate(days):
@@ -146,7 +146,7 @@ if uploaded_file is not None and st.button("🚀 إنشاء الجدول الم�
                         for p in range(num_periods):
                             model.Add(schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, p)] == 0)
 
-        # الموزون (Objective)
+        # دالة الهدف (Objective) لتوزيع الحصص بشكل تفضيلي
         model.Maximize(sum(var * (num_periods - p) for (key, var) in schedule.items() for p in [key[-1]]))
         
         solver = cp_model.CpSolver()
@@ -162,13 +162,13 @@ if uploaded_file is not None and st.button("🚀 إنشاء الجدول الم�
             
             df_result = pd.DataFrame(output_data)
             
+            # إنشاء الجدول الشامل (Master Table)
             wb_master = Workbook()
             ws_master = wb_master.active
             ws_master.title = "الحصص_الشامل"
             ws_master.sheet_view.rightToLeft = True
             ws_master.views.sheetView[0].showGridLines = True
 
-            # ترويسة الجدول الشامل
             header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
             sub_header_fill = PatternFill(start_color="818CF8", end_color="818CF8", fill_type="solid")
             title_fill = PatternFill(start_color="EEF2FF", end_color="EEF2FF", fill_type="solid")
@@ -208,7 +208,7 @@ if uploaded_file is not None and st.button("🚀 إنشاء الجدول الم�
                     p_cell.fill = sub_header_fill
                 current_col += len(periods)
 
-            # --- تعبئة الجدول الشامل بالمنطق المطابق تماماً ---
+            # تعبئة الجدول الشامل مع معالجة وتدقيق النصوص والفراغات بنسبة 100%
             for idx, cls in enumerate(sorted(list(classes)), start=1):
                 row_num = 5 + idx - 1
                 ws_master.row_dimensions[row_num].height = 35
@@ -252,5 +252,6 @@ if st.session_state.generated:
     with col1:
         with open("final_timetable.xlsx", "rb") as f: 
             st.download_button("تحميل الجداول النهائية", f, "final_timetable.xlsx")
-    with open("all_classes_master_table.xlsx", "rb") as f: 
-        st.download_button("تحميل الجدول الشامل", f, "all_classes_master_table.xlsx")
+    with col2:
+        with open("all_classes_master_table.xlsx", "rb") as f: 
+            st.download_button("تحميل الجدول الشامل", f, "all_classes_master_table.xlsx")
