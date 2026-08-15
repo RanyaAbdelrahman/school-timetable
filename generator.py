@@ -776,7 +776,55 @@ def generate_timetable():
                             objective_terms.append(
                                 schedule[(idx, c, s, t, r, d, p)] * (-UNWANTED_PERIOD_PENALTY)
                             )
+# 7. عدالة توزيع حصص المعلمين على أيام العمل (تقليل التباين بين الأيام)
+    TEACHER_LOAD_BALANCE_PENALTY = 40  # غرامة التفاوت بين أيام المعلم الواحد
 
+    for teacher_name in teachers:
+        off_days = teacher_off_days.get(teacher_name, [])
+        work_days_indices = [
+            d for d in range(num_days) if days[d] not in off_days
+        ]
+
+        if len(work_days_indices) <= 1:
+            continue
+
+        # حساب عدد حصص المعلم في كل يوم عمل
+        teacher_daily_loads = {}
+        for d in work_days_indices:
+            day_lessons = []
+            for item in clean_assignments:
+                assignment_teachers = [
+                    x.strip() for x in item["t"].split("/") if x.strip()
+                ]
+                if teacher_name in assignment_teachers:
+                    for p in range(num_periods):
+                        day_lessons.append(
+                            schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, p)]
+                        )
+
+            teacher_daily_loads[d] = model.NewIntVar(
+                0, num_periods, f"t_load_{teacher_name}_{d}"
+            )
+            if day_lessons:
+                model.Add(teacher_daily_loads[d] == sum(day_lessons))
+            else:
+                model.Add(teacher_daily_loads[d] == 0)
+
+        # مقارنة حمولة كل يوم بأيام العمل الأخرى لنفس المعلم ومعاقبة الفرق الكبير
+        for i in range(len(work_days_indices)):
+            for j in range(i + 1, len(work_days_indices)):
+                d1 = work_days_indices[i]
+                d2 = work_days_indices[j]
+
+                diff_var = model.NewIntVar(
+                    0, num_periods, f"t_diff_{teacher_name}_{d1}_{d2}"
+                )
+                model.AddAbsEquality(
+                    diff_var, teacher_daily_loads[d1] - teacher_daily_loads[d2]
+                )
+
+                # طرح غرامة تعتمد على مدى الفرق (كلما زاد الفرق بين الأيام زادت الغرامة)
+                objective_terms.append(diff_var * (-TEACHER_LOAD_BALANCE_PENALTY))
     model.Maximize(sum(objective_terms))
 
     # ========================================================
