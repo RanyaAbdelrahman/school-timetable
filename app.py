@@ -100,6 +100,22 @@ def clean_off_days(value):
         if day and day not in result: result.append(day)
     return result
 
+def clean_unwanted_periods(value):
+    if pd.isna(value):
+        return []
+    text = str(value).strip()
+    if not text:
+        return []
+    text = text.replace("،", ",")
+    result = []
+    for p in text.split(","):
+        p = p.strip()
+        if p.isdigit():
+            val = int(p)
+            if val not in result:
+                result.append(val)
+    return result
+
 def format_excel_workbook(file_path, school_name):
     wb = load_workbook(file_path)
     header_fill = PatternFill(start_color="6366F1", end_color="6366F1", fill_type="solid")
@@ -229,11 +245,16 @@ if uploaded_file is not None:
                     periods = [f"الحصة {p + 1}" for p in range(num_periods)]
 
                     teacher_off_days = {}
+                    teacher_unwanted_periods = {}
                     for _, row in df_teachers.iterrows():
                         if pd.isna(row["Teacher"]): continue
                         t_name = str(row["Teacher"]).strip()
                         off_days = clean_off_days(row.get("OffDays", []))
                         teacher_off_days[t_name] = [d for d in off_days if d in days]
+                        
+                        # دعم الحصص غير المفضلة (مثل ساعات الرضاعة) كقيد مرن
+                        if "UnwantedPeriods" in df_teachers.columns:
+                            teacher_unwanted_periods[t_name] = clean_unwanted_periods(row.get("UnwantedPeriods", ""))
 
                     clean_assignments = []
                     for idx, row in df_assignments.iterrows():
@@ -291,7 +312,7 @@ if uploaded_file is not None:
                                 model.Add(schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, last_period_idx)] == 0)
 
                     # ========================================================
-                    # ⭐ OBJECTIVE - محسّن وسريع للغاية
+                    # ⭐ OBJECTIVE - محسّن وسريع للغاية (مع دعم الحصص غير المفضلة كعقوبة مرنة)
                     # ========================================================
                     objective_terms = []
 
@@ -300,7 +321,7 @@ if uploaded_file is not None:
                         p = key[-1]
                         objective_terms.append(var * (num_periods - p) * 10)
 
-                    # 2. تفضيل توزيع المواد على أيام مختلفة (توزيع عادل وسريع التنفيذ)
+                    # 2. تفضيل توزيع المواد على أيام مختلفة
                     for item in clean_assignments:
                         idx = item["idx"]
                         c = item["c"]
@@ -314,6 +335,18 @@ if uploaded_file is not None:
                             model.Add(sum(day_lessons) >= 1).OnlyEnforceIf(day_has_subject)
                             model.Add(sum(day_lessons) == 0).OnlyEnforceIf(day_has_subject.Not())
                             objective_terms.append(day_has_subject * 50)
+
+                    # 3. عقوبة الحصص غير المفضلة للمدرسين (مثل ساعات الرضاعة) كقيد مرن
+                    for item in clean_assignments:
+                        for t_name in [x.strip() for x in item["t"].split("/") if x.strip()]:
+                            unwanted_list = teacher_unwanted_periods.get(t_name, [])
+                            if unwanted_list:
+                                for d in range(num_days):
+                                    for p in range(num_periods):
+                                        # الحصص في الإكسل تبدأ من 1، بينما p من 0
+                                        if (p + 1) in unwanted_list:
+                                            var = schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, p)]
+                                            objective_terms.append(var * -200) # عقوبة لتجنب هذه الحصص قدر الإمكان
 
                     model.Maximize(sum(objective_terms))
 
