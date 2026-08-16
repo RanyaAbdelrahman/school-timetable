@@ -795,7 +795,6 @@ def generate_timetable():
         if len(work_days_indices) <= 1:
             continue
 
-        # حساب عدد حصص المعلم في كل يوم عمل
         teacher_daily_loads = {}
         for d in work_days_indices:
             day_lessons = []
@@ -817,7 +816,6 @@ def generate_timetable():
             else:
                 model.Add(teacher_daily_loads[d] == 0)
 
-        # مقارنة حمولة كل يوم بأيام العمل الأخرى لنفس المعلم ومعاقبة الفرق الكبير
         for i in range(len(work_days_indices)):
             for j in range(i + 1, len(work_days_indices)):
                 d1 = work_days_indices[i]
@@ -830,7 +828,6 @@ def generate_timetable():
                     diff_var, teacher_daily_loads[d1] - teacher_daily_loads[d2]
                 )
 
-                # طرح غرامة تعتمد على مدى الفرق (كلما زاد الفرق بين الأيام زادت الغرامة)
                 objective_terms.append(diff_var * (-TEACHER_LOAD_BALANCE_PENALTY))
 
     model.Maximize(sum(objective_terms))
@@ -901,6 +898,10 @@ def generate_timetable():
 
             df_summary.to_excel(writer, sheet_name="كشف_المعلمين", index=False)
 
+            # كتابة شيت قائمة الفصول (إن وجد أو تم إنشاؤه كتلخيص)
+            df_classes_list = pd.DataFrame({"ClassName": classes})
+            df_classes_list.to_excel(writer, sheet_name="قائمة_الفصول", index=False)
+
             for c in classes:
                 df_c = df_result[
                     df_result["الفصل"].apply(
@@ -945,32 +946,22 @@ def generate_timetable():
                 else:
                     pivot_t = pd.DataFrame("راحة", index=days, columns=periods)
 
-                pivot_t = pivot_t.reindex(index=days, columns=periods).fillna("راحة")
-
-                for off_day in off_days_for_t:
-                    if off_day in pivot_t.index:
-                        pivot_t.loc[off_day, :] = "إجازة (OFF)"
+                pivot_t = pivot_t.reindex(index=days, columns=periods)
+                
+                # تعبئة أيام إجازة المعلم بكلمة "إجازة"
+                for d_idx, day_name in enumerate(days):
+                    if day_name in off_days_for_t:
+                        for p_name in periods:
+                            pivot_t.loc[day_name, p_name] = "إجازة"
+                    else:
+                        for p_name in periods:
+                            if pd.isna(pivot_t.loc[day_name, p_name]):
+                                pivot_t.loc[day_name, p_name] = "راحة"
 
                 pivot_t.to_excel(writer, sheet_name=f"مدرس_{t}")
 
-            for room in sorted(list(all_rooms)):
-                df_r = df_result[df_result["القاعة"] == room]
-
-                if not df_r.empty:
-                    df_r_copy = df_r.copy()
-                    df_r_copy["عرض_الخلايا"] = (
-                        df_r_copy["الفصل"] + "\n(" + df_r_copy["المادة"] + " - " + df_r_copy["المدرس"] + ")"
-                    )
-                    pivot_r = df_r_copy.pivot_table(
-                        index="اليوم", columns="الحصة", values="عرض_الخلايا", aggfunc="first"
-                    )
-                else:
-                    pivot_r = pd.DataFrame("متاحة", index=days, columns=periods)
-
-                pivot_r = pivot_r.reindex(index=days, columns=periods).fillna("متاحة")
-                pivot_r.to_excel(writer, sheet_name=f"قاعة_{room}")
-
+        print(f"📁 تم حفظ ملف الجدول النهائي في: {out_file}")
         format_excel_workbook(out_file)
-        print("🎉 تمت معالجة وتنسيق ملفات الجداول بنجاح!")
+
     else:
-        print("⚠️ لم يتم العثور على حل يوافي جميع القيود (No feasible solution found).")
+        print("❌ لم يتم العثور على حل ممكن (No solution found). يرجى مراجعة القيود أو المدخلات.")
