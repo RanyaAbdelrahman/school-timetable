@@ -311,4 +311,16 @@ if uploaded_file is not None:
                 if log_text.strip():
                     with st.expander("📋 تفاصيل المولد"): st.text(log_text[-8000:])
 
-st.markdown("<div style='text-align:center;padding:15px;colo
+st.markdown(
+    """
+    <div style="
+        text-align:center;
+        padding:15px;
+        color:#4f46e5;
+        font-weight:bold;
+    ">
+        Code Wonders Academy — نظام الإدارة الذكية للجداول المدرسية
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
