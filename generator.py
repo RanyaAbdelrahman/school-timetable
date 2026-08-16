@@ -898,7 +898,6 @@ def generate_timetable():
 
             df_summary.to_excel(writer, sheet_name="كشف_المعلمين", index=False)
 
-            # كتابة شيت قائمة الفصول (إن وجد أو تم إنشاؤه كتلخيص)
             df_classes_list = pd.DataFrame({"ClassName": classes})
             df_classes_list.to_excel(writer, sheet_name="قائمة_الفصول", index=False)
 
@@ -944,24 +943,29 @@ def generate_timetable():
                         index="اليوم", columns="الحصة", values="عرض_الخلايا", aggfunc="first"
                     )
                 else:
-                    pivot_t = pd.DataFrame("راحة", index=days, columns=periods)
+                    pivot_t = pd.DataFrame(index=days, columns=periods)
 
                 pivot_t = pivot_t.reindex(index=days, columns=periods)
                 
-                # تعبئة أيام إجازة المعلم بكلمة "إجازة"
+                # تعبئة أيام الإجازة والراحة
                 for d_idx, day_name in enumerate(days):
                     if day_name in off_days_for_t:
-                        for p_name in periods:
-                            pivot_t.loc[day_name, p_name] = "إجازة"
+                        for p_col in periods:
+                            pivot_t.loc[day_name, p_col] = "إجازة"
                     else:
-                        for p_name in periods:
-                            if pd.isna(pivot_t.loc[day_name, p_name]):
-                                pivot_t.loc[day_name, p_name] = "راحة"
+                        for p_col in periods:
+                            if pd.isna(pivot_t.loc[day_name, p_col]):
+                                pivot_t.loc[day_name, p_col] = "راحة"
 
                 pivot_t.to_excel(writer, sheet_name=f"مدرس_{t}")
 
-        print(f"📁 تم حفظ ملف الجدول النهائي في: {out_file}")
+        print("📁 جارٍ تنسيق وتجميل ملف Excel النهائي...")
         format_excel_workbook(out_file)
+        print(f"✨ تم الحفظ بنجاح في: {out_file}")
 
     else:
-        print("❌ لم يتم العثور على حل ممكن (No solution found). يرجى مراجعة القيود أو المدخلات.")
+        print("❌ لم يتم العثور على حل ممكن (Infeasible Model).")
+        print("يرجى مراجعة القيود أو الحصص المطلوبة والتأكد من إمكانية جدولتها.")
+
+if __name__ == "__main__":
+    generate_timetable()
