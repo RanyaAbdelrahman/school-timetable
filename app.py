@@ -5,6 +5,7 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+
 # إعدادات الصفحة
 st.set_page_config(
     page_title="⭐ نظام الإدارة الذكية للجداول المدرسية ⭐",
