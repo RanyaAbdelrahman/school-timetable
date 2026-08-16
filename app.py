@@ -253,7 +253,6 @@ if uploaded_file is not None:
                         off_days = clean_off_days(row.get("OffDays", []))
                         teacher_off_days[t_name] = [d for d in off_days if d in days]
                         
-                        # دعم الحصص غير المفضلة (مثل ساعات الرضاعة) كقيد مرن
                         if "UnwantedPeriods" in df_teachers.columns:
                             teacher_unwanted_periods[t_name] = clean_unwanted_periods(row.get("UnwantedPeriods", ""))
 
@@ -312,17 +311,12 @@ if uploaded_file is not None:
                             for d in range(num_days):
                                 model.Add(schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, last_period_idx)] == 0)
 
-                    # ========================================================
-                    # ⭐ OBJECTIVE - محسّن وسريع للغاية (مع دعم الحصص غير المفضلة كعقوبة مرنة)
-                    # ========================================================
                     objective_terms = []
 
-                    # 1. تفضيل الحصص المبكرة
                     for key, var in schedule.items():
                         p = key[-1]
                         objective_terms.append(var * (num_periods - p) * 10)
 
-                    # 2. تفضيل توزيع المواد على أيام مختلفة
                     for item in clean_assignments:
                         idx = item["idx"]
                         c = item["c"]
@@ -337,17 +331,15 @@ if uploaded_file is not None:
                             model.Add(sum(day_lessons) == 0).OnlyEnforceIf(day_has_subject.Not())
                             objective_terms.append(day_has_subject * 50)
 
-                    # 3. عقوبة الحصص غير المفضلة للمدرسين (مثل ساعات الرضاعة) كقيد مرن
                     for item in clean_assignments:
                         for t_name in [x.strip() for x in item["t"].split("/") if x.strip()]:
                             unwanted_list = teacher_unwanted_periods.get(t_name, [])
                             if unwanted_list:
                                 for d in range(num_days):
                                     for p in range(num_periods):
-                                        # الحصص في الإكسل تبدأ من 1، بينما p من 0
                                         if (p + 1) in unwanted_list:
                                             var = schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, p)]
-                                            objective_terms.append(var * -200) # عقوبة لتجنب هذه الحصص قدر الإمكان
+                                            objective_terms.append(var * -200)
 
                     model.Maximize(sum(objective_terms))
 
