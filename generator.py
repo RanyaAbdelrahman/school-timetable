@@ -214,10 +214,16 @@ def format_excel_workbook(file_path):
 
                 if c_idx == 1:
                     cell.font = day_font
-
                     cell.fill = PatternFill(
                         start_color="E2EFDA", end_color="E2EFDA", fill_type="solid"
                     )
+                    
+                    # محاذاة تلقائية لعمود اليوم (يمين عربي، يسار إنجليزي)
+                    val_text = str(cell.value or "")
+                    if any("\u0600" <= char <= "\u06ff" for char in val_text):
+                        cell.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
+                    else:
+                        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
                 val_str = str(cell.value or "")
 
@@ -481,7 +487,7 @@ def generate_timetable():
                                     item["r"],
                                     d,
                                     p,
-                                )
+                                ]
                             ]
                         )
 
@@ -776,7 +782,8 @@ def generate_timetable():
                             objective_terms.append(
                                 schedule[(idx, c, s, t, r, d, p)] * (-UNWANTED_PERIOD_PENALTY)
                             )
-# 7. عدالة توزيع حصص المعلمين على أيام العمل (تقليل التباين بين الأيام)
+
+    # 7. عدالة توزيع حصص المعلمين على أيام العمل (تقليل التباين بين الأيام)
     TEACHER_LOAD_BALANCE_PENALTY = 40  # غرامة التفاوت بين أيام المعلم الواحد
 
     for teacher_name in teachers:
@@ -825,6 +832,7 @@ def generate_timetable():
 
                 # طرح غرامة تعتمد على مدى الفرق (كلما زاد الفرق بين الأيام زادت الغرامة)
                 objective_terms.append(diff_var * (-TEACHER_LOAD_BALANCE_PENALTY))
+
     model.Maximize(sum(objective_terms))
 
     # ========================================================
@@ -951,23 +959,18 @@ def generate_timetable():
                 if not df_r.empty:
                     df_r_copy = df_r.copy()
                     df_r_copy["عرض_الخلايا"] = (
-                        df_r_copy["الفصل"] + "\n(" + df_r_copy["المادة"] + ")"
+                        df_r_copy["الفصل"] + "\n(" + df_r_copy["المادة"] + " - " + df_r_copy["المدرس"] + ")"
                     )
+                    pivot_r = df_r_copy.pivot_table(
+                        index="اليوم", columns="الحصة", values="عرض_الخلايا", aggfunc="first"
+                    )
+                else:
+                    pivot_r = pd.DataFrame("متاحة", index=days, columns=periods)
 
-                    pivot_r = (
-                        df_r_copy.pivot_table(
-                            index="اليوم",
-                            columns="الحصة",
-                            values="عرض_الخلايا",
-                            aggfunc="first",
-                        )
-                        .fillna("متاحة")
-                        .reindex(index=days, columns=periods)
-                    )
-                    pivot_r.to_excel(writer, sheet_name=f"قاعة_{room}")
+                pivot_r = pivot_r.reindex(index=days, columns=periods).fillna("متاحة")
+                pivot_r.to_excel(writer, sheet_name=f"قاعة_{room}")
 
         format_excel_workbook(out_file)
-        print(f"📁 تم حفظ الملف النهائي في: {out_file}")
-
+        print("🎉 تمت معالجة وتنسيق ملفات الجداول بنجاح!")
     else:
-        print("❌ لم يتم العثور على حل صالح يرضي كافة القيود المفروضة.")
+        print("⚠️ لم يتم العثور على حل يوافي جميع القيود (No feasible solution found).")
