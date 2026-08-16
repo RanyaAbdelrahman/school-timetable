@@ -12,13 +12,16 @@ import pandas as pd
 
 
 def get_path(filename):
+    workdir = os.environ.get("TIMETABLE_WORKDIR")
+    if workdir:
+        os.makedirs(workdir, exist_ok=True)
+        return os.path.join(workdir, filename)
     if getattr(sys, "frozen", False):
         return os.path.join(os.path.dirname(sys.executable), filename)
-    else:
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
 
 
-SCHOOL_NAME = "مدرسة رواد المستقبل الخاصة بصنبو"
+SCHOOL_NAME = os.environ.get("SCHOOL_NAME", "مدرسة رواد المستقبل الخاصة بصنبو")
 
 
 # ============================================================
@@ -478,17 +481,15 @@ def generate_timetable():
 
                     if teacher_name in assignment_teachers:
                         teacher_vars.append(
-                            schedule[
-                                (
-                                    item["idx"],
-                                    item["c"],
-                                    item["s"],
-                                    item["t"],
-                                    item["r"],
-                                    d,
-                                    p,
-                                ]
-                            ]
+                            schedule[(
+                                item["idx"],
+                                item["c"],
+                                item["s"],
+                                item["t"],
+                                item["r"],
+                                d,
+                                p,
+                            )]
                         )
 
                 if teacher_vars:
