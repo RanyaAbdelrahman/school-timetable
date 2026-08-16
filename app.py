@@ -13,32 +13,30 @@ st.set_page_config(page_title="⭐ نظام الإدارة الذكية للجد
 APP_VERSION = "LICENSED-GENERATOR-2026-08-16"
 
 
-def secret_value(name, default=None):
-    value = st.secrets.get(name, None)
-    if value not in (None, ""):
-        return value
-    try:
-        section = st.secrets.get("supabase", {})
-        if isinstance(section, dict):
-            value = section.get(name, None)
-            if value not in (None, ""):
-                return value
-    except Exception:
-        pass
-    return default
-
-
 try:
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
-except Exception:
-    st.error("❌ لم يتم العثور على [supabase] url/key في Streamlit Secrets.")
+    ADMIN_PASSWORD = st.secrets["supabase"]["ADMIN_PASSWORD"]
+    SERVICE_ROLE_KEY = st.secrets["supabase"]["SUPABASE_SERVICE_ROLE_KEY"]
+except Exception as e:
+    st.error(
+        "❌ تعذر قراءة Streamlit Secrets.\n\n"
+        "يجب أن تكون القيم داخل [supabase] بهذا الشكل:\n\n"
+        "[supabase]\n"
+        'url = "https://....supabase.co"\n'
+        'key = "sb_publishable_..."\n'
+        'ADMIN_PASSWORD = "..."\n'
+        'SUPABASE_SERVICE_ROLE_KEY = "sb_secret_..."\n\n'
+        f"التفاصيل: {e}"
+    )
     st.stop()
 
-ADMIN_PASSWORD = secret_value("ADMIN_PASSWORD")
-SERVICE_ROLE_KEY = secret_value("SUPABASE_SERVICE_ROLE_KEY")
-if not ADMIN_PASSWORD:
-    st.error("❌ ADMIN_PASSWORD غير موجود في Streamlit Secrets.")
+if not str(ADMIN_PASSWORD).strip():
+    st.error("❌ ADMIN_PASSWORD فارغة داخل Streamlit Secrets.")
+    st.stop()
+
+if not str(SERVICE_ROLE_KEY).strip():
+    st.error("❌ SUPABASE_SERVICE_ROLE_KEY فارغة داخل Streamlit Secrets.")
     st.stop()
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -275,9 +273,9 @@ if st.button("🚪 تسجيل الخروج"):
     st.rerun()
 
 try:
-    from generator_final import generate_timetable
+    from generator import generate_timetable
 except Exception as e:
-    st.error(f"❌ تعذر تحميل generator_final.py: {e}")
+    st.error(f"❌ تعذر تحميل generator.py: {e}")
     st.stop()
 
 st.markdown("### 📂 اختر ملف البيانات بصيغة Excel (inputs.xlsx)")
