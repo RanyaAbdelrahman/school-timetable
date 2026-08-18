@@ -1,5 +1,6 @@
 import os
 import re
+import hashlib
 import tempfile
 from contextlib import redirect_stdout
 from datetime import date
@@ -279,50 +280,144 @@ except Exception as e:
     st.stop()
 
 st.markdown("### 📂 اختر ملف البيانات بصيغة Excel (inputs.xlsx)")
-uploaded_file = st.file_uploader("ارفع ملف Excel", type=["xlsx"], label_visibility="collapsed")
+uploaded_file = st.file_uploader(
+    "ارفع ملف Excel",
+    type=["xlsx"],
+    label_visibility="collapsed",
+)
+
+# ------------------------------------------------------------
+# حالة التوليد:
+# - كل ملف Excel له بصمة مستقلة.
+# - الضغط على Download لا يشغّل التوليد مرة أخرى.
+# - رفع ملف جديد فقط يعيد ضبط النتائج.
+# ------------------------------------------------------------
+if "generated_file_hash" not in st.session_state:
+    st.session_state.generated_file_hash = None
+if "generated_files" not in st.session_state:
+    st.session_state.generated_files = {}
+if "generation_log" not in st.session_state:
+    st.session_state.generation_log = ""
+
 if uploaded_file is not None:
+    uploaded_bytes = uploaded_file.getvalue()
+    file_hash = hashlib.sha256(uploaded_bytes).hexdigest()
+
+    # إذا تم رفع ملف جديد: امسح نتيجة الملف السابق فقط.
+    if st.session_state.get("uploaded_file_hash") != file_hash:
+        st.session_state.uploaded_file_hash = file_hash
+        st.session_state.generated_file_hash = None
+        st.session_state.generated_files = {}
+        st.session_state.generation_log = ""
+
     st.success(f"📄 الملف: {uploaded_file.name}")
-    if st.button("🚀 إنشاء الجدول المدرسي", use_container_width=True):
-        with st.spinner("✨ جاري معالجة البيانات وبناء الجداول بدقة، يرجى الانتظار..."):
-            workdir = tempfile.mkdtemp(prefix="school_timetable_")
-            Path(workdir, "inputs.xlsx").write_bytes(uploaded_file.getvalue())
-            os.environ["TIMETABLE_WORKDIR"] = workdir
-            os.environ["SCHOOL_NAME"] = str(current_school.get("school_name") or "")
-            output_path = Path(workdir, "final_timetable.xlsx")
-            log_buffer = StringIO()
-            try:
-                with redirect_stdout(log_buffer):
-                    generate_timetable()
-                log_text = log_buffer.getvalue()
-                if not output_path.exists():
-                    st.error("❌ لم يتم إنشاء ملف final_timetable.xlsx.")
-                    if log_text.strip():
-                        with st.expander("📋 تفاصيل عملية التوليد"): st.text(log_text[-8000:])
-                else:
-                    st.success("🎉 تم إنشاء الجدول بنجاح!")
-                    st.download_button("📥 تحميل الجدول النهائي", data=output_path.read_bytes(), file_name="final_timetable.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-                    master_output_path = Path(workdir) / "all_classes_master_table.xlsx"
+    generated = (
+        st.session_state.generated_file_hash == file_hash
+        and file_hash in st.session_state.generated_files
+    )
 
-                    if master_output_path.exists():
-                        st.download_button(
-                            "📘 تحميل ملف All Classes الشامل",
-                            data=master_output_path.read_bytes(),
-                            file_name="all_classes_master_table.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True,
-                        )
+    if not generated:
+        if st.button("🚀 إنشاء الجدول المدرسي", use_container_width=True):
+            with st.spinner("✨ جاري معالجة البيانات وبناء الجداول بدقة، يرجى الانتظار..."):
+                workdir = tempfile.mkdtemp(prefix="school_timetable_")
+                Path(workdir, "inputs.xlsx").write_bytes(uploaded_bytes)
+
+                os.environ["TIMETABLE_WORKDIR"] = workdir
+                os.environ["SCHOOL_NAME"] = str(
+                    current_school.get("school_name") or ""
+                ).strip()
+
+                log_buffer = StringIO()
+
+                try:
+                    with redirect_stdout(log_buffer):
+                        generate_timetable()
+
+                    log_text = log_buffer.getvalue()
+                    st.session_state.generation_log = log_text
+
+                    safe_school_name = re.sub(
+                        r'[\\/:*?"<>|]+',
+                        "_",
+                        str(current_school.get("school_name") or "مدرسة").strip(),
+                    ).strip(" .") or "مدرسة"
+
+                    output_path = Path(
+                        workdir,
+                        f"{safe_school_name}_final_timetable.xlsx",
+                    )
+                    master_output_path = Path(
+                        workdir,
+                        f"{safe_school_name}_all_classes.xlsx",
+                    )
+
+                    if not output_path.exists():
+                        st.error("❌ لم يتم إنشاء ملف الجدول النهائي.")
+                        if log_text.strip():
+                            with st.expander("📋 تفاصيل عملية التوليد"):
+                                st.text(log_text[-8000:])
+                    elif not master_output_path.exists():
+                        st.error("❌ تم إنشاء الجدول النهائي لكن ملف All Classes لم يتم إنشاؤه.")
+                        if log_text.strip():
+                            with st.expander("📋 تفاصيل عملية التوليد"):
+                                st.text(log_text[-8000:])
                     else:
-                        st.warning(
-                            "⚠️ تم إنشاء final_timetable.xlsx لكن ملف All Classes لم يتم إنشاؤه."
-                        )
+                        # نحفظ bytes نفسها في session_state.
+                        # بعد ذلك Download لا يحتاج إلى قراءة/إنشاء Excel مرة أخرى.
+                        st.session_state.generated_files[file_hash] = {
+                            "final_name": f"{safe_school_name}_final_timetable.xlsx",
+                            "final_data": output_path.read_bytes(),
+                            "all_name": f"{safe_school_name}_all_classes.xlsx",
+                            "all_data": master_output_path.read_bytes(),
+                        }
+                        st.session_state.generated_file_hash = file_hash
+
+                        st.success("🎉 تم إنشاء الجدول بنجاح!")
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"❌ حدث خطأ أثناء المعالجة: {e}")
+                    log_text = log_buffer.getvalue()
+                    st.session_state.generation_log = log_text
                     if log_text.strip():
-                        with st.expander("📋 تفاصيل عملية التوليد"): st.text(log_text[-8000:])
-            except Exception as e:
-                st.error(f"❌ حدث خطأ أثناء المعالجة: {e}")
-                log_text = log_buffer.getvalue()
-                if log_text.strip():
-                    with st.expander("📋 تفاصيل المولد"): st.text(log_text[-8000:])
+                        with st.expander("📋 تفاصيل المولد"):
+                            st.text(log_text[-8000:])
+
+    # --------------------------------------------------------
+    # أزرار التحميل تُعرض خارج زر التوليد.
+    # لذلك تظل ظاهرة بعد الضغط على Download،
+    # والضغط عليها لا يعيد تشغيل generate_timetable().
+    # --------------------------------------------------------
+    generated_data = st.session_state.generated_files.get(file_hash)
+
+    if (
+        st.session_state.generated_file_hash == file_hash
+        and generated_data
+    ):
+        st.success("✅ الجدول جاهز للتحميل — لن تتم إعادة التوليد عند التحميل.")
+
+        st.download_button(
+            "📥 تحميل الجدول النهائي",
+            data=generated_data["final_data"],
+            file_name=generated_data["final_name"],
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"download_final_{file_hash}",
+        )
+
+        st.download_button(
+            "📘 تحميل ملف All Classes الشامل",
+            data=generated_data["all_data"],
+            file_name=generated_data["all_name"],
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"download_all_{file_hash}",
+        )
+
+        if st.session_state.generation_log.strip():
+            with st.expander("📋 تفاصيل عملية التوليد"):
+                st.text(st.session_state.generation_log[-8000:])
 
 st.markdown(
     """
