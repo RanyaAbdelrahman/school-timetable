@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -74,8 +75,11 @@ def clean_unwanted_periods(value):
 # ============================================================
 
 
-def format_excel_workbook(file_path):
+def format_excel_workbook(file_path, school_name=None):
     wb = load_workbook(file_path)
+    school_name = str(
+        school_name if school_name is not None else os.environ.get("SCHOOL_NAME", SCHOOL_NAME)
+    ).strip() or "مدرسة --------"
 
     header_fill = PatternFill(
         start_color="1F4E78", end_color="1F4E78", fill_type="solid"
@@ -161,7 +165,7 @@ def format_excel_workbook(file_path):
 
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_cols)
 
-        ws.cell(row=1, column=1, value=SCHOOL_NAME)
+        ws.cell(row=1, column=1, value=school_name)
 
         ws.cell(row=1, column=1).font = school_title_font
 
@@ -267,6 +271,12 @@ def format_excel_workbook(file_path):
 
 
 def generate_timetable():
+    # اسم المدرسة يُقرأ وقت التوليد حتى لا يبقى الاسم الافتراضي
+    # الذي كان موجودًا وقت استيراد الملف.
+    school_name = str(
+        os.environ.get("SCHOOL_NAME", SCHOOL_NAME)
+    ).strip() or "مدرسة --------"
+
     excel_file = get_path("inputs.xlsx")
 
     if not os.path.exists(excel_file):
@@ -877,8 +887,15 @@ def generate_timetable():
                         })
 
         df_result = pd.DataFrame(output_data)
-        out_file = get_path("final_timetable.xlsx")
-        master_table_file = get_path("all_classes_master_table.xlsx")
+        def safe_filename(value):
+            value = re.sub(r'[\\/:*?"<>|]+', "_", str(value).strip())
+            value = re.sub(r"\\s+", " ", value).strip(" .")
+            return value or "مدرسة"
+
+        safe_school_name = safe_filename(school_name)
+
+        out_file = get_path(f"{safe_school_name}_final_timetable.xlsx")
+        master_table_file = get_path(f"{safe_school_name}_all_classes.xlsx")
 
         # القاعات المستخدمة فعليًا
         rooms = sorted({
@@ -922,7 +939,7 @@ def generate_timetable():
             f"A1:{get_column_letter(total_cols)}1"
         )
         title = ws_master.cell(
-            1, 1, "جدول الحصص المدرسي الشامل لجميع الفصول"
+            1, 1, f"{school_name} - جدول الحصص المدرسي الشامل لجميع الفصول"
         )
         title.font = Font(
             name="Segoe UI", size=14, bold=True, color="4F46E5"
@@ -1141,7 +1158,7 @@ def generate_timetable():
 
 
         print("📁 جارٍ تنسيق وتجميل ملف Excel النهائي...")
-        format_excel_workbook(out_file)
+        format_excel_workbook(out_file, school_name)
         print(f"✨ تم الحفظ بنجاح في: {out_file}")
         print(f"📘 ملف الحصص الشامل: {master_table_file}")
 
@@ -1150,4 +1167,4 @@ def generate_timetable():
         print("يرجى مراجعة القيود أو الحصص المطلوبة والتأكد من إمكانية جدولتها.")
 
 if __name__ == "__main__":
-    generate_timetable()
+    generate_timetable(
