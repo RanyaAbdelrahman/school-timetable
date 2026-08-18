@@ -946,7 +946,9 @@ def generate_timetable():
                 else:
                     pivot_t = pd.DataFrame(index=days, columns=periods)
 
-                pivot_t = pivot_t.reindex(index=days, columns=periods)
+                # مهم: pandas قد ينشئ الجدول بنوع float64 عندما تكون كل الخلايا فارغة.
+                # نحوله إلى object قبل إدخال النصوص "راحة" و"إجازة".
+                pivot_t = pivot_t.reindex(index=days, columns=periods).astype(object)
                 
                 # تعبئة أيام الإجازة والراحة
                 for d_idx, day_name in enumerate(days):
