@@ -301,6 +301,21 @@ if uploaded_file is not None:
                 else:
                     st.success("🎉 تم إنشاء الجدول بنجاح!")
                     st.download_button("📥 تحميل الجدول النهائي", data=output_path.read_bytes(), file_name="final_timetable.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+                    master_output_path = Path(workdir) / "all_classes_master_table.xlsx"
+
+                    if master_output_path.exists():
+                        st.download_button(
+                            "📘 تحميل ملف All Classes الشامل",
+                            data=master_output_path.read_bytes(),
+                            file_name="all_classes_master_table.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.warning(
+                            "⚠️ تم إنشاء final_timetable.xlsx لكن ملف All Classes لم يتم إنشاؤه."
+                        )
                     if log_text.strip():
                         with st.expander("📋 تفاصيل عملية التوليد"): st.text(log_text[-8000:])
             except Exception as e:
@@ -317,7 +332,7 @@ st.markdown(
         color:#4f46e5;
         font-weight:bold;
     ">
-        Code Wonders Academy — نظام الإدارة الذكية للجداول المدرسية
+        Code Wonders Academy — 01060572506
     </div>
     """,
     unsafe_allow_html=True,
