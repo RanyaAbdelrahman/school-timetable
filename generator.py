@@ -81,6 +81,7 @@ def format_excel_workbook(file_path, school_name=None):
         school_name if school_name is not None else os.environ.get("SCHOOL_NAME", SCHOOL_NAME)
     ).strip() or "مدرسة --------"
 
+
     header_fill = PatternFill(
         start_color="1F4E78", end_color="1F4E78", fill_type="solid"
     )
@@ -271,12 +272,9 @@ def format_excel_workbook(file_path, school_name=None):
 
 
 def generate_timetable():
-    # اسم المدرسة يُقرأ وقت التوليد حتى لا يبقى الاسم الافتراضي
-    # الذي كان موجودًا وقت استيراد الملف.
     school_name = str(
         os.environ.get("SCHOOL_NAME", SCHOOL_NAME)
     ).strip() or "مدرسة --------"
-
     excel_file = get_path("inputs.xlsx")
 
     if not os.path.exists(excel_file):
@@ -889,11 +887,10 @@ def generate_timetable():
         df_result = pd.DataFrame(output_data)
         def safe_filename(value):
             value = re.sub(r'[\\/:*?"<>|]+', "_", str(value).strip())
-            value = re.sub(r"\\s+", " ", value).strip(" .")
+            value = re.sub(r"\s+", " ", value).strip(" .")
             return value or "مدرسة"
 
         safe_school_name = safe_filename(school_name)
-
         out_file = get_path(f"{safe_school_name}_final_timetable.xlsx")
         master_table_file = get_path(f"{safe_school_name}_all_classes.xlsx")
 
@@ -1167,4 +1164,4 @@ def generate_timetable():
         print("يرجى مراجعة القيود أو الحصص المطلوبة والتأكد من إمكانية جدولتها.")
 
 if __name__ == "__main__":
-    generate_timetable(
+    generate_timetable()
