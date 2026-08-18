@@ -21,7 +21,7 @@ def get_path(filename):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
 
 
-SCHOOL_NAME = os.environ.get("SCHOOL_NAME", "مدرسة رواد المستقبل الخاصة بصنبو")
+SCHOOL_NAME = os.environ.get("SCHOOL_NAME", "مدرسة --------")
 
 
 # ============================================================
@@ -878,6 +878,142 @@ def generate_timetable():
 
         df_result = pd.DataFrame(output_data)
         out_file = get_path("final_timetable.xlsx")
+        master_table_file = get_path("all_classes_master_table.xlsx")
+
+        # القاعات المستخدمة فعليًا
+        rooms = sorted({
+            str(item.get("r", "")).strip()
+            for item in clean_assignments
+            if str(item.get("r", "")).strip()
+            and str(item.get("r", "")).strip().lower() not in {"classroom", "nan"}
+        })
+
+        # ========================================================
+        # ملف All Classes الشامل
+        # ========================================================
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        wb_master = Workbook()
+        ws_master = wb_master.active
+        ws_master.title = "الحصص_الشامل"
+        ws_master.sheet_view.rightToLeft = True
+
+        thin_border = Border(
+            left=Side(style="thin", color="E2E8F0"),
+            right=Side(style="thin", color="E2E8F0"),
+            top=Side(style="thin", color="E2E8F0"),
+            bottom=Side(style="thin", color="E2E8F0"),
+        )
+        header_fill = PatternFill(
+            start_color="6366F1", end_color="6366F1", fill_type="solid"
+        )
+        sub_header_fill = PatternFill(
+            start_color="818CF8", end_color="818CF8", fill_type="solid"
+        )
+        title_fill = PatternFill(
+            start_color="EEF2FF", end_color="EEF2FF", fill_type="solid"
+        )
+        center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        total_cols = 2 + len(days) * len(periods)
+        ws_master.merge_cells(
+            f"A1:{get_column_letter(total_cols)}1"
+        )
+        title = ws_master.cell(
+            1, 1, "جدول الحصص المدرسي الشامل لجميع الفصول"
+        )
+        title.font = Font(
+            name="Segoe UI", size=14, bold=True, color="4F46E5"
+        )
+        title.alignment = center
+        title.fill = title_fill
+        ws_master.row_dimensions[1].height = 40
+
+        for col, value in ((1, "م"), (2, "اسم الفصل")):
+            cell = ws_master.cell(3, col, value)
+            cell.font = Font(
+                name="Segoe UI", size=10, bold=True, color="FFFFFF"
+            )
+            cell.alignment = center
+            cell.fill = header_fill
+
+        ws_master.merge_cells("A3:A4")
+        ws_master.merge_cells("B3:B4")
+
+        current_col = 3
+        for day in days:
+            start_col = current_col
+            end_col = current_col + len(periods) - 1
+            ws_master.merge_cells(
+                start_row=3,
+                start_column=start_col,
+                end_row=3,
+                end_column=end_col,
+            )
+            day_cell = ws_master.cell(3, start_col, day)
+            day_cell.font = Font(
+                name="Segoe UI", size=10, bold=True, color="FFFFFF"
+            )
+            day_cell.alignment = center
+            day_cell.fill = header_fill
+
+            for p_idx, period in enumerate(periods):
+                cell = ws_master.cell(4, start_col + p_idx, period)
+                cell.font = Font(
+                    name="Segoe UI", size=10, bold=True, color="FFFFFF"
+                )
+                cell.alignment = center
+                cell.fill = sub_header_fill
+
+            current_col += len(periods)
+
+        for idx, cls in enumerate(sorted(classes), start=1):
+            row_num = 4 + idx
+            ws_master.cell(row_num, 1, idx).alignment = center
+            ws_master.cell(row_num, 2, str(cls)).alignment = center
+            ws_master.row_dimensions[row_num].height = 35
+
+            col_cursor = 3
+            for day in days:
+                for period in periods:
+                    match = df_result[
+                        df_result["الفصل"].apply(
+                            lambda x: str(cls) in [
+                                part.strip() for part in str(x).split(",")
+                            ]
+                        )
+                        & (df_result["اليوم"] == day)
+                        & (df_result["الحصة"] == period)
+                    ]
+
+                    if not match.empty:
+                        first = match.iloc[0]
+                        subject = str(first.get("المادة", ""))
+                        teacher = str(first.get("المدرس", ""))
+                        value = f"{subject}\n({teacher})" if teacher else subject
+                    else:
+                        value = "متاحة"
+
+                    cell = ws_master.cell(row_num, col_cursor, value)
+                    cell.alignment = center
+                    cell.border = thin_border
+                    cell.font = Font(name="Segoe UI", size=8)
+                    col_cursor += 1
+
+        for column in ws_master.columns:
+            max_len = max(
+                (len(str(c.value or "").split("\n")[0]) for c in column),
+                default=10,
+            )
+            ws_master.column_dimensions[
+                get_column_letter(column[0].column)
+            ].width = max(max_len + 4, 15)
+
+        wb_master.save(master_table_file)
+        print(f"📘 تم إنشاء ملف All Classes: {master_table_file}")
+
 
         with pd.ExcelWriter(out_file, engine="openpyxl") as writer:
             df_result.to_excel(writer, sheet_name="Master_Schedule", index=False)
@@ -962,9 +1098,52 @@ def generate_timetable():
 
                 pivot_t.to_excel(writer, sheet_name=f"مدرس_{t}")
 
+            # ====================================================
+            # شيتات القاعات داخل final_timetable.xlsx
+            # ====================================================
+            for room in rooms:
+                df_r = df_result[
+                    df_result["القاعة"].astype(str).str.strip()
+                    == str(room).strip()
+                ]
+
+                if not df_r.empty:
+                    df_r_copy = df_r.copy()
+                    df_r_copy["عرض_الخلايا"] = (
+                        df_r_copy["الفصل"].astype(str)
+                        + "\n("
+                        + df_r_copy["المادة"].astype(str)
+                        + " - "
+                        + df_r_copy["المدرس"].astype(str)
+                        + ")"
+                    )
+                    pivot_r = df_r_copy.pivot_table(
+                        index="اليوم",
+                        columns="الحصة",
+                        values="عرض_الخلايا",
+                        aggfunc="first",
+                    )
+                else:
+                    pivot_r = pd.DataFrame(
+                        "متاحة", index=days, columns=periods
+                    )
+
+                pivot_r = (
+                    pivot_r.reindex(index=days, columns=periods)
+                    .fillna("متاحة")
+                    .astype(object)
+                )
+
+                pivot_r.to_excel(
+                    writer,
+                    sheet_name=f"قاعة_{room}"[:31],
+                )
+
+
         print("📁 جارٍ تنسيق وتجميل ملف Excel النهائي...")
         format_excel_workbook(out_file)
         print(f"✨ تم الحفظ بنجاح في: {out_file}")
+        print(f"📘 ملف الحصص الشامل: {master_table_file}")
 
     else:
         print("❌ لم يتم العثور على حل ممكن (Infeasible Model).")
