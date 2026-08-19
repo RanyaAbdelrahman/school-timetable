@@ -323,7 +323,7 @@ if uploaded_file is not None:
         st.session_state.generated_file_hash == file_hash
         and generated_data
     ):
-        st.success("✅ الجدول جاهز للتحميل — لن تتم إعادة التوليد عند التحميل.")
+        st.success("✅ الجدول جاهز للتحميل")
 
         st.download_button(
             "📥 تحميل الجدول النهائي",
@@ -335,7 +335,7 @@ if uploaded_file is not None:
         )
 
         st.download_button(
-            "📘 تحميل ملف All Classes الشامل",
+            "📘 تحميل ملف الفصول الشامل",
             data=generated_data["all_data"],
             file_name=generated_data["all_name"],
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -355,7 +355,7 @@ st.markdown(
         color:#4f46e5;
         font-weight:bold;
     ">
-        Code Wonders Academy — 01060572506
+        Code Wonders Academy — 📞 01060572506
     </div>
     """,
     unsafe_allow_html=True,
