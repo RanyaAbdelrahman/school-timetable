@@ -346,7 +346,6 @@ if uploaded_file is not None:
         if st.session_state.generation_log.strip():
             with st.expander("📋 تفاصيل عملية التوليد"):
                 st.text(st.session_state.generation_log[-8000:])
-
 st.markdown(
     """
     <div style="
