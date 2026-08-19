@@ -1,6 +1,6 @@
 import os
-import sys
 import re
+import sys
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -22,7 +22,11 @@ def get_path(filename):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
 
 
-SCHOOL_NAME = os.environ.get("SCHOOL_NAME", "مدرسة --------")
+SCHOOL_NAME = "مدرسة --------"
+
+def get_school_name():
+    return str(os.environ.get("SCHOOL_NAME", SCHOOL_NAME)).strip() or "مدرسة --------"
+
 
 
 # ============================================================
@@ -77,10 +81,7 @@ def clean_unwanted_periods(value):
 
 def format_excel_workbook(file_path, school_name=None):
     wb = load_workbook(file_path)
-    school_name = str(
-        school_name if school_name is not None else os.environ.get("SCHOOL_NAME", SCHOOL_NAME)
-    ).strip() or "مدرسة --------"
-
+    school_name = str(school_name if school_name is not None else get_school_name()).strip() or 'مدرسة --------'
 
     header_fill = PatternFill(
         start_color="1F4E78", end_color="1F4E78", fill_type="solid"
@@ -272,9 +273,6 @@ def format_excel_workbook(file_path, school_name=None):
 
 
 def generate_timetable():
-    school_name = str(
-        os.environ.get("SCHOOL_NAME", SCHOOL_NAME)
-    ).strip() or "مدرسة --------"
     excel_file = get_path("inputs.xlsx")
 
     if not os.path.exists(excel_file):
@@ -885,12 +883,15 @@ def generate_timetable():
                         })
 
         df_result = pd.DataFrame(output_data)
+
         def safe_filename(value):
             value = re.sub(r'[\\/:*?"<>|]+', "_", str(value).strip())
-            value = re.sub(r"\s+", " ", value).strip(" .")
+            value = re.sub(r"\\s+", " ", value).strip(" .")
             return value or "مدرسة"
 
+        school_name = get_school_name()
         safe_school_name = safe_filename(school_name)
+
         out_file = get_path(f"{safe_school_name}_final_timetable.xlsx")
         master_table_file = get_path(f"{safe_school_name}_all_classes.xlsx")
 
