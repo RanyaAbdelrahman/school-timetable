@@ -147,6 +147,77 @@ st.markdown("""
 
 st.markdown("<div class='main-header'><h1>⭐ نظام الإدارة الذكية للجداول المدرسية ⭐</h1><p>Code Wonders Academy</p></div>", unsafe_allow_html=True)
 
+with st.sidebar:
+    st.markdown("## 🔐 الإدارة")
+    st.caption(APP_VERSION)
+    admin_mode = st.checkbox("فتح لوحة الإدارة")
+
+if admin_mode:
+    st.title("🔐 لوحة إدارة التراخيص")
+    entered_password = st.text_input("كلمة مرور الإدارة", type="password")
+    if entered_password != ADMIN_PASSWORD:
+        if entered_password:
+            st.error("❌ كلمة المرور غير صحيحة.")
+        st.info("أدخل كلمة مرور الإدارة لعرض الطلبات.")
+        st.stop()
+    st.success("✅ تم تسجيل دخول الإدارة.")
+    if not SERVICE_ROLE_KEY:
+        st.error("❌ لوحة الإدارة تحتاج SUPABASE_SERVICE_ROLE_KEY في Streamlit Secrets.")
+        st.stop()
+    try:
+        schools = admin_schools()
+    except Exception as e:
+        st.error(f"❌ تعذر قراءة جدول Schools: {e}")
+        st.stop()
+    if not schools:
+        st.info("لا توجد مدارس مسجلة حتى الآن.")
+    else:
+        st.write(f"### 📋 عدد المدارس: {len(schools)}")
+        for school in schools:
+            school_id = school.get("id")
+            school_name = school.get("school_name") or "بدون اسم"
+            email = school.get("email") or ""
+            phone = school.get("phone") or ""
+            status = school.get("status") or "pending"
+            start_raw = school.get("start_date")
+            expiry_raw = school.get("expiry_date")
+            license_key = school.get("license_key") or "-"
+            with st.expander(f"🏫 {school_name} — {status.upper()}"):
+                st.write(f"**Email:** {email}")
+                st.write(f"**Phone:** {phone}")
+                st.write(f"**Status:** {status}")
+                st.write(f"**License:** {license_key}")
+                try: start_default = date.fromisoformat(str(start_raw)[:10]) if start_raw else date.today()
+                except Exception: start_default = date.today()
+                try: expiry_default = date.fromisoformat(str(expiry_raw)[:10]) if expiry_raw else date.today()
+                except Exception: expiry_default = date.today()
+                c1, c2 = st.columns(2)
+                with c1: new_start = st.date_input("بداية الترخيص", value=start_default, key=f"start_{school_id}")
+                with c2: new_expiry = st.date_input("نهاية الترخيص", value=expiry_default, key=f"expiry_{school_id}")
+                a,b,c = st.columns(3)
+                with a:
+                    if st.button("✅ اعتماد", key=f"approve_{school_id}", use_container_width=True):
+                        if new_expiry < new_start:
+                            st.error("تاريخ الانتهاء يجب أن يكون بعد البداية.")
+                        else:
+                            try:
+                                save_license(school_id, new_start, new_expiry)
+                                st.success("تم اعتماد المدرسة.")
+                                st.rerun()
+                            except Exception as e: st.error(f"خطأ أثناء الاعتماد: {e}")
+                with b:
+                    if st.button("❌ رفض", key=f"reject_{school_id}", use_container_width=True):
+                        try:
+                            admin_update_school(school_id, {"status":"rejected"})
+                            st.success("تم رفض الطلب."); st.rerun()
+                        except Exception as e: st.error(f"خطأ: {e}")
+                with c:
+                    if st.button("⛔ إيقاف", key=f"block_{school_id}", use_container_width=True):
+                        try:
+                            admin_update_school(school_id, {"status":"blocked"})
+                            st.success("تم إيقاف الترخيص."); st.rerun()
+                        except Exception as e: st.error(f"خطأ: {e}")
+    st.stop()
 
 if "school_verified" not in st.session_state: st.session_state.school_verified = False
 if "school_record" not in st.session_state: st.session_state.school_record = None
@@ -261,7 +332,7 @@ st.markdown(
         color:#4f46e5;
         font-weight:bold;
     ">
-        Code Wonders Academy — 📞 01060572506
+        Code Wonders Academy — 01060572506
     </div>
     """,
     unsafe_allow_html=True,
