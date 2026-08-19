@@ -13,7 +13,6 @@ from supabase import create_client
 st.set_page_config(page_title="⭐ نظام الإدارة الذكية للجداول المدرسية ⭐", page_icon="🏫", layout="centered")
 APP_VERSION = "LICENSED-GENERATOR-2026-08-16"
 
-
 try:
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -43,14 +42,11 @@ if not str(SERVICE_ROLE_KEY).strip():
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 admin_supabase = create_client(SUPABASE_URL, SERVICE_ROLE_KEY) if SERVICE_ROLE_KEY else None
 
-
 def normalize_email(email):
     return (email or "").strip().lower()
 
-
 def valid_email(email):
     return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", normalize_email(email)))
-
 
 def rpc_data(result):
     data = getattr(result, "data", None)
@@ -58,12 +54,10 @@ def rpc_data(result):
         return data[0] if data else None
     return data
 
-
 def get_school(email):
     result = supabase.rpc("check_school_license", {"p_email": normalize_email(email)}).execute()
     data = rpc_data(result)
     return data if data and data.get("found") else None
-
 
 def create_school_request(school_name, email, phone):
     result = supabase.rpc("register_school", {
@@ -76,11 +70,9 @@ def create_school_request(school_name, email, phone):
         raise RuntimeError("لم تُرجع قاعدة البيانات بيانات المدرسة.")
     return data, not bool(data.get("exists", False))
 
-
 def generate_license_key():
     import secrets
     return "CW-" + secrets.token_hex(8).upper()
-
 
 def license_state(school):
     if not school:
@@ -109,20 +101,16 @@ def license_state(school):
         return "expired", f"انتهت صلاحية الترخيص في {expiry}."
     return "approved", f"الترخيص صالح حتى {expiry}."
 
-
 def require_admin_client():
     if not admin_supabase:
         raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY غير موجود في Streamlit Secrets.")
     return admin_supabase
 
-
 def admin_schools():
     return (require_admin_client().table("Schools").select("*").order("created_at", desc=True).execute()).data or []
 
-
 def admin_update_school(school_id, values):
     return require_admin_client().table("Schools").update(values).eq("id", school_id).execute()
-
 
 def save_license(school_id, start_date, expiry_date):
     client = require_admin_client()
@@ -135,7 +123,6 @@ def save_license(school_id, start_date, expiry_date):
         "expiry_date": str(expiry_date),
         "license_key": license_key,
     }).eq("id", school_id).execute()
-
 
 st.markdown("""
 <style>
@@ -214,12 +201,6 @@ uploaded_file = st.file_uploader(
     label_visibility="collapsed",
 )
 
-# ------------------------------------------------------------
-# حالة التوليد:
-# - كل ملف Excel له بصمة مستقلة.
-# - الضغط على Download لا يشغّل التوليد مرة أخرى.
-# - رفع ملف جديد فقط يعيد ضبط النتائج.
-# ------------------------------------------------------------
 if "generated_file_hash" not in st.session_state:
     st.session_state.generated_file_hash = None
 if "generated_files" not in st.session_state:
@@ -231,7 +212,6 @@ if uploaded_file is not None:
     uploaded_bytes = uploaded_file.getvalue()
     file_hash = hashlib.sha256(uploaded_bytes).hexdigest()
 
-    # إذا تم رفع ملف جديد: امسح نتيجة الملف السابق فقط.
     if st.session_state.get("uploaded_file_hash") != file_hash:
         st.session_state.uploaded_file_hash = file_hash
         st.session_state.generated_file_hash = None
@@ -291,8 +271,6 @@ if uploaded_file is not None:
                             with st.expander("📋 تفاصيل عملية التوليد"):
                                 st.text(log_text[-8000:])
                     else:
-                        # نحفظ bytes نفسها في session_state.
-                        # بعد ذلك Download لا يحتاج إلى قراءة/إنشاء Excel مرة أخرى.
                         st.session_state.generated_files[file_hash] = {
                             "final_name": f"{safe_school_name}_final_timetable.xlsx",
                             "final_data": output_path.read_bytes(),
@@ -312,11 +290,6 @@ if uploaded_file is not None:
                         with st.expander("📋 تفاصيل المولد"):
                             st.text(log_text[-8000:])
 
-    # --------------------------------------------------------
-    # أزرار التحميل تُعرض خارج زر التوليد.
-    # لذلك تظل ظاهرة بعد الضغط على Download،
-    # والضغط عليها لا يعيد تشغيل generate_timetable().
-    # --------------------------------------------------------
     generated_data = st.session_state.generated_files.get(file_hash)
 
     if (
@@ -346,6 +319,7 @@ if uploaded_file is not None:
         if st.session_state.generation_log.strip():
             with st.expander("📋 تفاصيل عملية التوليد"):
                 st.text(st.session_state.generation_log[-8000:])
+
 st.markdown(
     """
     <div style="
