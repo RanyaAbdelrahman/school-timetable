@@ -608,182 +608,153 @@ def generate_timetable():
                 model.Add(sum(var1) == sum(var2))
 
     # ========================================================
-    # قيد حصص القرآن
+    # قيد حصص القرآن الكريم - قيد صارم
     # ========================================================
-    # القاعدة:
-    # 1) حصص القرآن تكون متتالية داخل اليوم.
-    # 2) تكون إما في بداية اليوم أو في نهاية اليوم.
-    # 3) الحد الأقصى لحصص القرآن في اليوم =
-    #    ceil(إجمالي حصص القرآن للفصل / عدد أيام الأسبوع).
-    #
-    # مثال:
-    # 15 حصة قرآن على 6 أيام
-    # => الحد الأقصى = ceil(15 / 6) = 3 حصص في اليوم
-    #
-    # فيمكن أن يكون التوزيع:
-    # 3 + 3 + 3 + 3 + 3 + 0
-    # أو توزيع آخر، بشرط الالتزام بالحد الأقصى
-    # وأن تكون حصص كل يوم متتالية في البداية أو النهاية.
+    # القاعدة المطلوبة:
+    # - حصص القرآن لنفس الفصل تكون متتالية بلا أي فراغ بينها.
+    # - المجموعة تكون في بداية اليوم أو في نهاية اليوم فقط.
+    #   مثال: 3 حصص قرآن في يوم = 1,2,3 أو 5,6,7
+    #   ولا يمكن أن تكون 2,3,4 أو 1,3,4.
+    # - الحد الأقصى اليومي = ceil(إجمالي حصص القرآن الأسبوعية / عدد الأيام).
+    # - العدد الأسبوعي الفعلي يساوي WeeklyLessons بالضبط.
     # ========================================================
-
     import math
 
-    # البحث عن فصول بها قرآن
     quran_by_class = {}
 
-    for item in clean_assignments:
-        subject_normalized = str(item["s"]).strip().lower()
-
-        # التعرف على مادة القرآن
-        if (
-            "قرآن" in subject_normalized
-            or "قران" in subject_normalized
-            or "quran" in subject_normalized
-        ):
-            class_list = [
-                x.strip()
-                for x in str(item["c"]).split(",")
-                if x.strip()
-            ]
-
-            for class_name in class_list:
-                if class_name not in quran_by_class:
-                    quran_by_class[class_name] = []
-
-                quran_by_class[class_name].append(item)
-
-    # تطبيق قيد القرآن على كل فصل
-    for class_name, quran_items in quran_by_class.items():
-
-        # إجمالي حصص القرآن المطلوبة لهذا الفصل أسبوعيًا
-        total_quran_lessons = sum(
-            int(item["w"])
-            for item in quran_items
+    def is_quran_subject(subject):
+        text = str(subject or '').strip().lower()
+        return (
+            'قرآن' in text
+            or 'قران' in text
+            or 'quran' in text
         )
 
-        if total_quran_lessons <= 0:
+    # تجميع كل Assignments الخاصة بالقرآن حسب الفصل.
+    for item in clean_assignments:
+        if not is_quran_subject(item['s']):
             continue
 
-        # الحد الأقصى للقرآن في اليوم
-        max_quran_per_day = math.ceil(
-            total_quran_lessons / num_days
-        )
+        item_classes = [x.strip() for x in str(item['c']).split(',') if x.strip()]
+        for class_name in item_classes:
+            quran_by_class.setdefault(class_name, []).append(item)
 
-        # لا يمكن أن يزيد عن عدد حصص اليوم
-        max_quran_per_day = min(
-            max_quran_per_day,
-            num_periods
-        )
+    for class_name, quran_items in quran_by_class.items():
+        total_quran_lessons = sum(int(item['w']) for item in quran_items)
+
+        if total_quran_lessons <= 0 or num_days <= 0:
+            continue
+
+        max_quran_per_day = math.ceil(total_quran_lessons / num_days)
+
+        # إذا كان الحد اليومي أكبر من عدد الحصص في اليوم، فالنموذج
+        # لن يستطيع تنفيذ العدد المطلوب أصلًا؛ نترك Solver يحدد عدم الإمكانية.
+        max_quran_per_day = min(max_quran_per_day, num_periods)
+
+        quran_period_vars = {}
 
         for d in range(num_days):
-
-            # متغير يحدد هل توجد حصة قرآن في كل فترة
-            quran_period_vars = []
+            # --------------------------------------------------------
+            # qvar[p] = هل هذه الفترة قرآن لهذا الفصل؟
+            # --------------------------------------------------------
+            day_vars = []
 
             for p in range(num_periods):
-
-                vars_for_this_period = []
+                period_vars = []
 
                 for item in quran_items:
-                    key = (
-                        item["idx"],
-                        item["c"],
-                        item["s"],
-                        item["t"],
-                        item["r"],
-                        d,
-                        p,
+                    item_classes = [
+                        x.strip() for x in str(item['c']).split(',') if x.strip()
+                    ]
+                    if class_name not in item_classes:
+                        continue
+
+                    period_vars.append(
+                        schedule[(
+                            item['idx'],
+                            item['c'],
+                            item['s'],
+                            item['t'],
+                            item['r'],
+                            d,
+                            p,
+                        )]
                     )
 
-                    vars_for_this_period.append(
-                        schedule[key]
-                    )
+                qvar = model.NewBoolVar(f'quran_{class_name}_{d}_{p}')
 
-                quran_period = model.NewBoolVar(
-                    f"quran_{class_name}_{d}_{p}"
-                )
+                if period_vars:
+                    model.Add(qvar == sum(period_vars))
+                else:
+                    model.Add(qvar == 0)
 
-                if vars_for_this_period:
-                    # بسبب قيد تعارض الفصل، لا يمكن أن يكون
-                    # أكثر من متغير قرآن = 1 في نفس الفترة.
+                quran_period_vars[(d, p)] = qvar
+                day_vars.append(qvar)
+
+            # --------------------------------------------------------
+            # قيد صارم لشكل اليوم
+            # --------------------------------------------------------
+            # نختار بالضبط شكلًا واحدًا من الأشكال التالية:
+            # 0 حصص: لا قرآن في هذا اليوم
+            # k حصص في البداية: 1..k
+            # k حصص في النهاية: (N-k+1)..N
+            #
+            # وبالتالي لا يمكن إطلاقًا أن يظهر قرآن في منتصف اليوم
+            # أو أن يكون بين حصتين قرآن حصة أخرى.
+            # --------------------------------------------------------
+            mode_vars = []
+
+            # عدم وجود قرآن في هذا اليوم.
+            no_quran = model.NewBoolVar(f'quran_no_{class_name}_{d}')
+            mode_vars.append(no_quran)
+
+            # بداية اليوم / نهاية اليوم لكل عدد k من 1 إلى الحد الأقصى.
+            start_modes = {}
+            end_modes = {}
+
+            for k in range(1, max_quran_per_day + 1):
+                start_var = model.NewBoolVar(f'quran_start_{class_name}_{d}_{k}')
+                end_var = model.NewBoolVar(f'quran_end_{class_name}_{d}_{k}')
+                start_modes[k] = start_var
+                end_modes[k] = end_var
+                mode_vars.extend([start_var, end_var])
+
+            # يوم واحد = اختيار شكل واحد فقط.
+            model.Add(sum(mode_vars) == 1)
+
+            # كل فترة قرآن يجب أن تطابق الشكل المختار حرفيًا.
+            for p in range(num_periods):
+                allowed_mode_vars = []
+
+                for k in range(1, max_quran_per_day + 1):
+                    # بداية اليوم: الفترات 1..k
+                    if p < k:
+                        allowed_mode_vars.append(start_modes[k])
+
+                    # نهاية اليوم: آخر k فترات
+                    if p >= num_periods - k:
+                        allowed_mode_vars.append(end_modes[k])
+
+                # qvar = 1 إذا وفقط إذا كان الـ mode المختار يغطي هذه الفترة.
+                if allowed_mode_vars:
                     model.Add(
-                        quran_period
-                        == sum(vars_for_this_period)
+                        day_vars[p] == sum(allowed_mode_vars)
                     )
                 else:
-                    model.Add(quran_period == 0)
+                    model.Add(day_vars[p] == 0)
 
-                quran_period_vars.append(quran_period)
+            # الحد الأقصى اليومي.
+            model.Add(sum(day_vars) <= max_quran_per_day)
 
-            # ------------------------------------------------
-            # الحد الأقصى لعدد حصص القرآن في اليوم
-            # ------------------------------------------------
-            model.Add(
-                sum(quran_period_vars)
-                <= max_quran_per_day
-            )
-
-            # ------------------------------------------------
-            # هل يوجد قرآن في هذا اليوم؟
-            # ------------------------------------------------
-            quran_any = model.NewBoolVar(
-                f"quran_any_{class_name}_{d}"
-            )
-
-            model.AddMaxEquality(
-                quran_any,
-                quran_period_vars
-            )
-
-            # ------------------------------------------------
-            # نوع التوزيع:
-            # بداية اليوم أو نهاية اليوم
-            # ------------------------------------------------
-            quran_at_start = model.NewBoolVar(
-                f"quran_start_{class_name}_{d}"
-            )
-
-            quran_at_end = model.NewBoolVar(
-                f"quran_end_{class_name}_{d}"
-            )
-
-            # إذا كان هناك قرآن في اليوم:
-            # يجب أن يكون إما في البداية أو في النهاية.
-            #
-            # وإذا لم يوجد قرآن:
-            # كلاهما = 0
-            model.Add(
-                quran_at_start + quran_at_end
-                == quran_any
-            )
-
-            # ------------------------------------------------
-            # القرآن في بداية اليوم
-            #
-            # مثال:
-            # قرآن | قرآن | قرآن | عربي | رياضيات | ...
-            #
-            # بمجرد أن نجد 0، لا يسمح بوجود 1 بعدها.
-            # ------------------------------------------------
-            for p in range(num_periods - 1):
-                model.Add(
-                    quran_period_vars[p]
-                    >= quran_period_vars[p + 1]
-                ).OnlyEnforceIf(quran_at_start)
-
-            # ------------------------------------------------
-            # القرآن في نهاية اليوم
-            #
-            # مثال:
-            # ... | عربي | رياضيات | قرآن | قرآن | قرآن
-            #
-            # بمجرد أن نجد 1، لا يسمح بوجود 0 بعدها.
-            # ------------------------------------------------
-            for p in range(num_periods - 1):
-                model.Add(
-                    quran_period_vars[p]
-                    <= quran_period_vars[p + 1]
-                ).OnlyEnforceIf(quran_at_end)
+        # ------------------------------------------------------------
+        # العدد الأسبوعي يجب أن يساوي WeeklyLessons بالضبط.
+        # ------------------------------------------------------------
+        all_quran_vars = [
+            quran_period_vars[(d, p)]
+            for d in range(num_days)
+            for p in range(num_periods)
+        ]
+        model.Add(sum(all_quran_vars) == total_quran_lessons)
 
     # ========================================================
     # الحد من الحصص المتأخرة
