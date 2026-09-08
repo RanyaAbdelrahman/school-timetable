@@ -74,6 +74,26 @@ def clean_unwanted_periods(value):
     return result
 
 
+def clean_supervision_days(value):
+    """تنظيف أيام الإشراف المدخلة في عمود الإشراف."""
+    if pd.isna(value):
+        return []
+
+    text = str(value).strip()
+    if not text:
+        return []
+
+    text = text.replace("،", ",")
+    result = []
+
+    for day in text.split(","):
+        day = day.strip()
+        if day and day not in result:
+            result.append(day)
+
+    return result
+
+
 # ============================================================
 # تنسيق ملف Excel
 # ============================================================
@@ -328,6 +348,7 @@ def generate_timetable():
     teacher_off_days = {}
     teacher_max_off_days = {}
     teacher_unwanted_periods = {}
+    teacher_supervision_days = {}
 
     for _, row in df_teachers.iterrows():
         if pd.isna(row["Teacher"]):
@@ -355,6 +376,25 @@ def generate_timetable():
             )
         else:
             teacher_unwanted_periods[teacher_name] = []
+
+        # عمود الإشراف: اليوم المكتوب هنا يجب أن يكون للمعلم حصة في آخر فترة.
+        # يمكن إدخال أكثر من يوم مفصولًا بفاصلة عربية أو إنجليزية.
+        if "الإشراف" in df_teachers.columns:
+            supervision_days = clean_supervision_days(row["الإشراف"])
+        else:
+            supervision_days = []
+
+        valid_supervision_days = []
+        for supervision_day in supervision_days:
+            if supervision_day in days:
+                valid_supervision_days.append(supervision_day)
+            else:
+                print(
+                    f"⚠️ اليوم '{supervision_day}' للإشراف للمعلم '{teacher_name}' "
+                    "غير موجود في Days"
+                )
+
+        teacher_supervision_days[teacher_name] = valid_supervision_days
 
         if "MaxOffDays" in df_teachers.columns and pd.notna(row.get("MaxOffDays")):
             try:
@@ -875,6 +915,41 @@ def generate_timetable():
             # فستكون متجاورة بالضرورة.
             model.Add(sum(start_vars) <= 1)
             model.Add(sum(end_vars) <= 1)
+
+    # ========================================================
+    # الإشراف: المعلم المحدد له يوم إشراف يجب أن يأخذ الحصة الأخيرة
+    # في ذلك اليوم. هذا شرط إجباري (Hard Constraint).
+    # ========================================================
+
+    last_period = num_periods - 1
+
+    for teacher_name in teachers:
+        supervision_days = teacher_supervision_days.get(teacher_name, [])
+        if not supervision_days:
+            continue
+
+        teacher_items = []
+        for item in clean_assignments:
+            assignment_teachers = [
+                x.strip() for x in item["t"].split("/") if x.strip()
+            ]
+            if teacher_name in assignment_teachers:
+                teacher_items.append(item)
+
+        for supervision_day in supervision_days:
+            d = days.index(supervision_day)
+            last_period_vars = [
+                schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, last_period)]
+                for item in teacher_items
+                if (item["idx"], item["c"], item["s"], item["t"], item["r"], d, last_period) in schedule
+            ]
+
+            if last_period_vars:
+                # بسبب قيد تعارض المعلم، لا يمكن أن يأخذ أكثر من حصة في نفس الفترة،
+                # ولذلك >= 1 تعني فعليًا حصة أخيرة واحدة على الأقل.
+                model.Add(sum(last_period_vars) >= 1)
+            else:
+                model.AddBoolOr([])
 
     # ========================================================
     # الحد من الحصص المتأخرة
