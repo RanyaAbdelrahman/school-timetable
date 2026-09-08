@@ -757,6 +757,126 @@ def generate_timetable():
         model.Add(sum(all_quran_vars) == total_quran_lessons)
 
     # ========================================================
+    # حصص المادة الواحدة لنفس الفصل تكون متتالية في اليوم
+    # ========================================================
+    # القاعدة المطلوبة:
+    # إذا كان للفصل حصتان أو أكثر من نفس المادة في نفس اليوم،
+    # فلا يسمح بوجود فراغ بينهما.
+    # مثال:
+    #   2 حصص رياضيات -> 1,2 أو 3,4 أو 6,7   ✅
+    #   2 حصص رياضيات -> 1,3 أو 2,5         ❌
+    # وينطبق الشرط على أي عدد من الحصص لنفس المادة في اليوم.
+    # ========================================================
+
+    subject_by_class = {}
+
+    for item in clean_assignments:
+        subject_name = str(item["s"] or "").strip()
+        if not subject_name:
+            continue
+
+        item_classes = [
+            x.strip() for x in str(item["c"]).split(",") if x.strip()
+        ]
+
+        # استخدام اسم المادة بشكل موحد حتى لا تختلف المسافات فقط.
+        subject_key = subject_name.lower()
+
+        for class_name in item_classes:
+            subject_by_class.setdefault(
+                (class_name, subject_key),
+                {"name": subject_name, "items": []},
+            )["items"].append(item)
+
+    for (class_name, subject_key), group in subject_by_class.items():
+        subject_items = group["items"]
+
+        for d in range(num_days):
+            subject_period_vars = []
+
+            for p in range(num_periods):
+                period_vars = []
+
+                for item in subject_items:
+                    item_classes = [
+                        x.strip()
+                        for x in str(item["c"]).split(",")
+                        if x.strip()
+                    ]
+
+                    if class_name not in item_classes:
+                        continue
+
+                    period_vars.append(
+                        schedule[(
+                            item["idx"],
+                            item["c"],
+                            item["s"],
+                            item["t"],
+                            item["r"],
+                            d,
+                            p,
+                        )]
+                    )
+
+                subject_var = model.NewBoolVar(
+                    f"subject_day_{class_name}_{subject_key}_{d}_{p}"
+                )
+
+                if period_vars:
+                    # تعارض الفصل يضمن أن المجموع لن يتجاوز 1.
+                    model.Add(subject_var == sum(period_vars))
+                else:
+                    model.Add(subject_var == 0)
+
+                subject_period_vars.append(subject_var)
+
+            # ----------------------------------------------------
+            # منع وجود أكثر من مجموعة منفصلة للمادة في اليوم.
+            # ----------------------------------------------------
+            start_vars = []
+            end_vars = []
+
+            for p in range(num_periods):
+                start_var = model.NewBoolVar(
+                    f"subject_start_{class_name}_{subject_key}_{d}_{p}"
+                )
+                end_var = model.NewBoolVar(
+                    f"subject_end_{class_name}_{subject_key}_{d}_{p}"
+                )
+
+                current = subject_period_vars[p]
+
+                # بداية مجموعة المادة:
+                # current = 1 والسابق = 0 (أو لا يوجد سابق في أول حصة).
+                if p == 0:
+                    model.Add(start_var == current)
+                else:
+                    previous = subject_period_vars[p - 1]
+                    model.Add(start_var <= current)
+                    model.Add(start_var <= 1 - previous)
+                    model.Add(start_var >= current - previous)
+
+                # نهاية مجموعة المادة:
+                # current = 1 واللاحق = 0 (أو لا يوجد لاحق في آخر حصة).
+                if p == num_periods - 1:
+                    model.Add(end_var == current)
+                else:
+                    next_var = subject_period_vars[p + 1]
+                    model.Add(end_var <= current)
+                    model.Add(end_var <= 1 - next_var)
+                    model.Add(end_var >= current - next_var)
+
+                start_vars.append(start_var)
+                end_vars.append(end_var)
+
+            # في اليوم الواحد لا يمكن أن توجد أكثر من مجموعة واحدة
+            # من نفس المادة، وبالتالي إذا وُجدت حصتان أو أكثر
+            # فستكون متجاورة بالضرورة.
+            model.Add(sum(start_vars) <= 1)
+            model.Add(sum(end_vars) <= 1)
+
+    # ========================================================
     # الحد من الحصص المتأخرة
     # ========================================================
 
