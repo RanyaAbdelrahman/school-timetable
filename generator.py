@@ -1,6 +1,5 @@
-
-import re
 import os
+import re
 import sys
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -72,26 +71,6 @@ def clean_unwanted_periods(value):
             val = int(p)
             if val not in result:
                 result.append(val)
-    return result
-
-
-def clean_supervision_days(value):
-    """تنظيف أيام الإشراف المدخلة في عمود الإشراف."""
-    if pd.isna(value):
-        return []
-
-    text = str(value).strip()
-    if not text:
-        return []
-
-    text = text.replace("،", ",")
-    result = []
-
-    for day in text.split(","):
-        day = day.strip()
-        if day and day not in result:
-            result.append(day)
-
     return result
 
 
@@ -349,7 +328,6 @@ def generate_timetable():
     teacher_off_days = {}
     teacher_max_off_days = {}
     teacher_unwanted_periods = {}
-    teacher_supervision_days = {}
 
     for _, row in df_teachers.iterrows():
         if pd.isna(row["Teacher"]):
@@ -377,25 +355,6 @@ def generate_timetable():
             )
         else:
             teacher_unwanted_periods[teacher_name] = []
-
-        # عمود الإشراف: اليوم المكتوب هنا يجب أن يكون للمعلم حصة في آخر فترة.
-        # يمكن إدخال أكثر من يوم مفصولًا بفاصلة عربية أو إنجليزية.
-        if "الإشراف" in df_teachers.columns:
-            supervision_days = clean_supervision_days(row["الإشراف"])
-        else:
-            supervision_days = []
-
-        valid_supervision_days = []
-        for supervision_day in supervision_days:
-            if supervision_day in days:
-                valid_supervision_days.append(supervision_day)
-            else:
-                print(
-                    f"⚠️ اليوم '{supervision_day}' للإشراف للمعلم '{teacher_name}' "
-                    "غير موجود في Days"
-                )
-
-        teacher_supervision_days[teacher_name] = valid_supervision_days
 
         if "MaxOffDays" in df_teachers.columns and pd.notna(row.get("MaxOffDays")):
             try:
@@ -649,202 +608,6 @@ def generate_timetable():
                 model.Add(sum(var1) == sum(var2))
 
     # ========================================================
-    # قيد حصص القرآن الكريم - قيد صارم
-    # ========================================================
-    # القاعدة المطلوبة:
-    # - حصص القرآن لنفس الفصل تكون متتالية بلا أي فراغ بينها.
-    # - المجموعة تكون في بداية اليوم أو في نهاية اليوم فقط.
-    #   مثال: 3 حصص قرآن في يوم = 1,2,3 أو 5,6,7
-    #   ولا يمكن أن تكون 2,3,4 أو 1,3,4.
-    # - الحد الأقصى اليومي = ceil(إجمالي حصص القرآن الأسبوعية / عدد الأيام).
-    # - العدد الأسبوعي الفعلي يساوي WeeklyLessons بالضبط.
-    # ========================================================
-    import math
-
-    quran_by_class = {}
-
-    def is_quran_subject(subject):
-        text = str(subject or '').strip().lower()
-        return (
-            'قرآن' in text
-            or 'قران' in text
-            or 'quran' in text
-        )
-
-    # تجميع كل Assignments الخاصة بالقرآن حسب الفصل.
-    for item in clean_assignments:
-        if not is_quran_subject(item['s']):
-            continue
-
-        item_classes = [x.strip() for x in str(item['c']).split(',') if x.strip()]
-        for class_name in item_classes:
-            quran_by_class.setdefault(class_name, []).append(item)
-
-    for class_name, quran_items in quran_by_class.items():
-        total_quran_lessons = sum(int(item['w']) for item in quran_items)
-
-        if total_quran_lessons <= 0 or num_days <= 0:
-            continue
-
-        max_quran_per_day = math.ceil(total_quran_lessons / num_days)
-
-        # إذا كان الحد اليومي أكبر من عدد الحصص في اليوم، فالنموذج
-        # لن يستطيع تنفيذ العدد المطلوب أصلًا؛ نترك Solver يحدد عدم الإمكانية.
-        max_quran_per_day = min(max_quran_per_day, num_periods)
-
-        quran_period_vars = {}
-
-        for d in range(num_days):
-            # --------------------------------------------------------
-            # qvar[p] = هل هذه الفترة قرآن لهذا الفصل؟
-            # --------------------------------------------------------
-            day_vars = []
-
-            for p in range(num_periods):
-                period_vars = []
-
-                for item in quran_items:
-                    item_classes = [
-                        x.strip() for x in str(item['c']).split(',') if x.strip()
-                    ]
-                    if class_name not in item_classes:
-                        continue
-
-                    period_vars.append(
-                        schedule[(
-                            item['idx'],
-                            item['c'],
-                            item['s'],
-                            item['t'],
-                            item['r'],
-                            d,
-                            p,
-                        )]
-                    )
-
-                qvar = model.NewBoolVar(f'quran_{class_name}_{d}_{p}')
-
-                if period_vars:
-                    model.Add(qvar == sum(period_vars))
-                else:
-                    model.Add(qvar == 0)
-
-                quran_period_vars[(d, p)] = qvar
-                day_vars.append(qvar)
-
-            # --------------------------------------------------------
-            # قيد صارم لشكل اليوم
-            # --------------------------------------------------------
-            # نختار بالضبط شكلًا واحدًا من الأشكال التالية:
-            # 0 حصص: لا قرآن في هذا اليوم
-            # k حصص في البداية: 1..k
-            # k حصص في النهاية: (N-k+1)..N
-            #
-            # وبالتالي لا يمكن إطلاقًا أن يظهر قرآن في منتصف اليوم
-            # أو أن يكون بين حصتين قرآن حصة أخرى.
-            # --------------------------------------------------------
-            mode_vars = []
-
-            # عدم وجود قرآن في هذا اليوم.
-            no_quran = model.NewBoolVar(f'quran_no_{class_name}_{d}')
-            mode_vars.append(no_quran)
-
-            # بداية اليوم / نهاية اليوم لكل عدد k من 1 إلى الحد الأقصى.
-            start_modes = {}
-            end_modes = {}
-
-            for k in range(1, max_quran_per_day + 1):
-                start_var = model.NewBoolVar(f'quran_start_{class_name}_{d}_{k}')
-                end_var = model.NewBoolVar(f'quran_end_{class_name}_{d}_{k}')
-                start_modes[k] = start_var
-                end_modes[k] = end_var
-                mode_vars.extend([start_var, end_var])
-
-            # يوم واحد = اختيار شكل واحد فقط.
-            model.Add(sum(mode_vars) == 1)
-
-            # كل فترة قرآن يجب أن تطابق الشكل المختار حرفيًا.
-            for p in range(num_periods):
-                allowed_mode_vars = []
-
-                for k in range(1, max_quran_per_day + 1):
-                    # بداية اليوم: الفترات 1..k
-                    if p < k:
-                        allowed_mode_vars.append(start_modes[k])
-
-                    # نهاية اليوم: آخر k فترات
-                    if p >= num_periods - k:
-                        allowed_mode_vars.append(end_modes[k])
-
-                # qvar = 1 إذا وفقط إذا كان الـ mode المختار يغطي هذه الفترة.
-                if allowed_mode_vars:
-                    model.Add(
-                        day_vars[p] == sum(allowed_mode_vars)
-                    )
-                else:
-                    model.Add(day_vars[p] == 0)
-
-            # الحد الأقصى اليومي.
-            model.Add(sum(day_vars) <= max_quran_per_day)
-
-        # ------------------------------------------------------------
-        # العدد الأسبوعي يجب أن يساوي WeeklyLessons بالضبط.
-        # ------------------------------------------------------------
-        all_quran_vars = [
-            quran_period_vars[(d, p)]
-            for d in range(num_days)
-            for p in range(num_periods)
-        ]
-        model.Add(sum(all_quran_vars) == total_quran_lessons)
-
-    # ========================================================
-    # حصص المادة الواحدة لنفس الفصل تكون متتالية في اليوم
-    # ========================================================
-    # القاعدة المطلوبة:
-    # إذا كان للفصل حصتان أو أكثر من نفس المادة في نفس اليوم،
-    # فلا يسمح بوجود فراغ بينهما.
-    # مثال:
-    #   2 حصص رياضيات -> 1,2 أو 3,4 أو 6,7   ✅
-    #   2 حصص رياضيات -> 1,3 أو 2,5         ❌
-    # وينطبق الشرط على أي عدد من الحصص لنفس المادة في اليوم.
-    # ========================================================
-
-    # ========================================================
-    # الإشراف: المعلم المحدد له يوم إشراف يجب أن يأخذ الحصة الأخيرة
-    # في ذلك اليوم. هذا شرط إجباري (Hard Constraint).
-    # ========================================================
-
-    last_period = num_periods - 1
-
-    for teacher_name in teachers:
-        supervision_days = teacher_supervision_days.get(teacher_name, [])
-        if not supervision_days:
-            continue
-
-        teacher_items = []
-        for item in clean_assignments:
-            assignment_teachers = [
-                x.strip() for x in item["t"].split("/") if x.strip()
-            ]
-            if teacher_name in assignment_teachers:
-                teacher_items.append(item)
-
-        for supervision_day in supervision_days:
-            d = days.index(supervision_day)
-            last_period_vars = [
-                schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, last_period)]
-                for item in teacher_items
-                if (item["idx"], item["c"], item["s"], item["t"], item["r"], d, last_period) in schedule
-            ]
-
-            if last_period_vars:
-                # بسبب قيد تعارض المعلم، لا يمكن أن يأخذ أكثر من حصة في نفس الفترة،
-                # ولذلك >= 1 تعني فعليًا حصة أخيرة واحدة على الأقل.
-                model.Add(sum(last_period_vars) >= 1)
-            else:
-                model.AddBoolOr([])
-
-    # ========================================================
     # الحد من الحصص المتأخرة
     # ========================================================
 
@@ -874,40 +637,57 @@ def generate_timetable():
     # ========================================================
 
     objective_terms = []
-
-    # ========================================================
-    # أوزان القيود المرنة
-    # ========================================================
-    SUBJECT_DISTRIBUTION_PENALTY = 45
-    SUBJECT_DAY_SPREAD_BONUS = 90
-    # تم إلغاء شرط/تفضيل الحصص المتتالية للمادة داخل الفصل بناءً على الطلب.
-    # الأولوية الآن لعدالة توزيع المادة على أيام الأسبوع.
+    SUBJECT_DISTRIBUTION_PENALTY = 30
     UNWANTED_PERIOD_PENALTY = 40
-
-    # أولوية عدالة توزيع نصاب المعلم على أيام الأسبوع.
-    # هذه أوزان قوية حتى تكون العدالة أهم من تفضيل الحصص المبكرة
-    # أو أي تفضيلات تجميلية أخرى، مع بقاءها Soft وليست Hard.
-    TEACHER_ACTIVE_DAY_BONUS = 25000
-    TEACHER_LOAD_BALANCE_PENALTY = 100000
-
-    # عدالة توزيع مواد المعلم على أيام الأسبوع.
-    # لا نغير النصاب الأسبوعي الثابت للمعلم؛ فقط نفضل توزيع كل مادة
-    # التي يدرسها على أيام العمل بصورة أكثر عدالة.
-    TEACHER_SUBJECT_DAY_BALANCE_PENALTY = 15000
-
-    # تنوع حصص المعلم بين الحصة الأولى والأخيرة.
-    # نكافئ استخدام الحصص المختلفة ونقلل التفاوت الكبير في عدد مرات
-    # وضع المعلم في نفس رقم الحصة خلال الأسبوع.
-    TEACHER_PERIOD_DIVERSITY_BONUS = 5000
-    TEACHER_PERIOD_BALANCE_PENALTY = 5000
-    # عدالة توزيع المادة داخل الفصل على أيام الأسبوع - أولوية عليا.
-    CLASS_SUBJECT_DAY_BALANCE_PENALTY = 30000
-
 
     # 1. تفضيل الحصص المبكرة
     for (idx, c, s, t, r, d, p), var in schedule.items():
         weight = (num_periods - p) * 10
         objective_terms.append(var * weight)
+
+    # 2. عدالة توزيع المواد داخل الفصول على الأيام
+    class_subject_groups = {}
+    for item in clean_assignments:
+        class_names = [x.strip() for x in item["c"].split(",") if x.strip()]
+        for class_name in class_names:
+            key = (class_name, item["s"])
+            if key not in class_subject_groups:
+                class_subject_groups[key] = []
+            class_subject_groups[key].append(item)
+
+    for (class_name, subject), items in class_subject_groups.items():
+        daily_load = {}
+        for d in range(num_days):
+            lesson_vars = []
+            for item in items:
+                idx = item["idx"]
+                c = item["c"]
+                s = item["s"]
+                t = item["t"]
+                r = item["r"]
+                item_classes = [x.strip() for x in c.split(",") if x.strip()]
+
+                if class_name in item_classes:
+                    for p in range(num_periods):
+                        lesson_vars.append(
+                            schedule[(idx, c, s, t, r, d, p)]
+                        )
+
+            daily_load[d] = model.NewIntVar(
+                0, len(lesson_vars), f"subject_load_{class_name}_{subject}_{d}"
+            )
+            if lesson_vars:
+                model.Add(daily_load[d] == sum(lesson_vars))
+            else:
+                model.Add(daily_load[d] == 0)
+
+        for d1 in range(num_days):
+            for d2 in range(d1 + 1, num_days):
+                difference = model.NewIntVar(
+                    0, num_periods * len(items), f"subject_diff_{class_name}_{subject}_{d1}_{d2}"
+                )
+                model.AddAbsEquality(difference, daily_load[d1] - daily_load[d2])
+                objective_terms.append(difference * (-SUBJECT_DISTRIBUTION_PENALTY))
 
     # 3. توزيع حصص المواد على الأيام المختلفة
     for item in clean_assignments:
@@ -968,189 +748,26 @@ def generate_timetable():
                 model.Add(sum(teacher_lessons_on_day) == 0).OnlyEnforceIf(
                     teacher_day_has_lessons[d].Not()
                 )
-                objective_terms.append(teacher_day_has_lessons[d] * TEACHER_ACTIVE_DAY_BONUS)
+                objective_terms.append(teacher_day_has_lessons[d] * 50)
 
-        # شرط أولوية: إذا كان نصاب المعلم يكفي لتغطية كل أيام العمل،
-        # فلا نسمح بيوم فراغ غير مبرر له. أيام OffDays مستثناة تلقائيًا.
-        teacher_total_lessons = sum(
-            item["w"] for item in clean_assignments
-            if teacher_name in [x.strip() for x in item["t"].split("/") if x.strip()]
-        )
-        if teacher_total_lessons >= len(work_days_indices) and work_days_indices:
-            for d in work_days_indices:
-                model.Add(teacher_day_has_lessons[d] == 1)
-
-    # 4-أ. عدالة توزيع مواد المعلم على مدار الأسبوع.
-    # لكل (معلم، مادة) نقلل التفاوت في عدد حصص المادة بين أيام العمل.
-    teacher_subject_groups = {}
+    # 5. تقليل الحصص المتتالية لنفس Assignment
     for item in clean_assignments:
-        assignment_teachers = [
-            x.strip() for x in item["t"].split("/") if x.strip()
-        ]
-        for teacher_name in assignment_teachers:
-            key = (teacher_name, item["s"])
-            teacher_subject_groups.setdefault(key, []).append(item)
+        idx = item["idx"]
+        c = item["c"]
+        s = item["s"]
+        t = item["t"]
+        r = item["r"]
 
-    for (teacher_name, subject), items in teacher_subject_groups.items():
-        off_days = teacher_off_days.get(teacher_name, [])
-        work_days_indices = [
-            d for d in range(num_days) if days[d] not in off_days
-        ]
-
-        if len(work_days_indices) <= 1:
-            continue
-
-        subject_daily_loads = {}
-        for d in work_days_indices:
-            day_vars = []
-            for item in items:
-                for p in range(num_periods):
-                    day_vars.append(
-                        schedule[(
-                            item["idx"], item["c"], item["s"], item["t"],
-                            item["r"], d, p
-                        )]
-                    )
-
-            subject_daily_loads[d] = model.NewIntVar(
-                0, num_periods * max(1, len(items)),
-                f"teacher_subject_load_{teacher_name}_{subject}_{d}"
-            )
-            if day_vars:
-                model.Add(subject_daily_loads[d] == sum(day_vars))
-            else:
-                model.Add(subject_daily_loads[d] == 0)
-
-        for i in range(len(work_days_indices)):
-            for j in range(i + 1, len(work_days_indices)):
-                d1 = work_days_indices[i]
-                d2 = work_days_indices[j]
-                diff = model.NewIntVar(
-                    0, num_periods * max(1, len(items)),
-                    f"teacher_subject_diff_{teacher_name}_{subject}_{d1}_{d2}"
-                )
-                model.AddAbsEquality(
-                    diff,
-                    subject_daily_loads[d1] - subject_daily_loads[d2]
-                )
-                objective_terms.append(
-                    diff * (-TEACHER_SUBJECT_DAY_BALANCE_PENALTY)
-                )
-
-    # 4-ب. عدالة توزيع المادة داخل نفس الفصل على أيام الأسبوع.
-    # نقلل التفاوت بين عدد حصص المادة في كل يوم؛ مثلًا 1،1،1،1،2 أفضل
-    # من 0،0،1،1،3 متى كان ذلك ممكنًا، مع احترام القيود الصارمة الأخرى.
-    class_subject_groups = {}
-    for item in clean_assignments:
-        for class_name in [x.strip() for x in str(item["c"]).split(",") if x.strip()]:
-            class_subject_groups.setdefault((class_name, item["s"]), []).append(item)
-
-    for (class_name, subject), items in class_subject_groups.items():
-        if num_days <= 1:
-            continue
-        daily_loads = {}
         for d in range(num_days):
-            day_vars = []
-            for item in items:
-                day_vars.extend(
-                    schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, p)]
-                    for p in range(num_periods)
-                )
-            daily_loads[d] = model.NewIntVar(
-                0, num_periods * max(1, len(items)),
-                f"class_subject_load_{class_name}_{subject}_{d}"
-            )
-            model.Add(daily_loads[d] == sum(day_vars) if day_vars else 0)
+            for p in range(num_periods - 1):
+                both_lessons = model.NewBoolVar(f"both_{idx}_{d}_{p}")
+                current_var = schedule[(idx, c, s, t, r, d, p)]
+                next_var = schedule[(idx, c, s, t, r, d, p + 1)]
 
-        for i in range(num_days):
-            for j in range(i + 1, num_days):
-                diff = model.NewIntVar(
-                    0, num_periods * max(1, len(items)),
-                    f"class_subject_diff_{class_name}_{subject}_{i}_{j}"
-                )
-                model.AddAbsEquality(diff, daily_loads[i] - daily_loads[j])
-                objective_terms.append(diff * (-CLASS_SUBJECT_DAY_BALANCE_PENALTY))
-
-    # 4-ب. تنويع أرقام الحصص للمعلم من الأولى حتى الأخيرة.
-    # نفضل ألا يكون المعلم محصورًا في رقم حصة واحد أو رقمين طوال الأسبوع.
-    for teacher_name in teachers:
-        off_days = teacher_off_days.get(teacher_name, [])
-        work_days_indices = [
-            d for d in range(num_days) if days[d] not in off_days
-        ]
-
-        if not work_days_indices:
-            continue
-
-        teacher_period_loads = {}
-        teacher_period_used = {}
-
-        for p in range(num_periods):
-            period_vars = []
-            for item in clean_assignments:
-                assignment_teachers = [
-                    x.strip() for x in item["t"].split("/") if x.strip()
-                ]
-                if teacher_name in assignment_teachers:
-                    for d in work_days_indices:
-                        period_vars.append(
-                            schedule[(
-                                item["idx"], item["c"], item["s"], item["t"],
-                                item["r"], d, p
-                            )]
-                        )
-
-            teacher_period_loads[p] = model.NewIntVar(
-                0, num_days * max(1, len(clean_assignments)),
-                f"teacher_period_load_{teacher_name}_{p}"
-            )
-            if period_vars:
-                model.Add(teacher_period_loads[p] == sum(period_vars))
-            else:
-                model.Add(teacher_period_loads[p] == 0)
-
-            teacher_period_used[p] = model.NewBoolVar(
-                f"teacher_period_used_{teacher_name}_{p}"
-            )
-            model.Add(
-                teacher_period_loads[p] >= 1
-            ).OnlyEnforceIf(teacher_period_used[p])
-            model.Add(
-                teacher_period_loads[p] == 0
-            ).OnlyEnforceIf(teacher_period_used[p].Not())
-
-            objective_terms.append(
-                teacher_period_used[p] * TEACHER_PERIOD_DIVERSITY_BONUS
-            )
-
-        # تقليل التفاوت بين أرقام الحصص المختلفة.
-        for p1 in range(num_periods):
-            for p2 in range(p1 + 1, num_periods):
-                diff = model.NewIntVar(
-                    0, num_days * max(1, len(clean_assignments)),
-                    f"teacher_period_diff_{teacher_name}_{p1}_{p2}"
-                )
-                model.AddAbsEquality(
-                    diff,
-                    teacher_period_loads[p1] - teacher_period_loads[p2]
-                )
-                objective_terms.append(
-                    diff * (-TEACHER_PERIOD_BALANCE_PENALTY)
-                )
-
-        # موازنة مباشرة بين الحصة الأولى والحصة الأخيرة للمعلم.
-        first_last_diff = model.NewIntVar(
-            0, num_days * max(1, len(clean_assignments)),
-            f"teacher_first_last_diff_{teacher_name}"
-        )
-        model.AddAbsEquality(
-            first_last_diff,
-            teacher_period_loads[0] - teacher_period_loads[num_periods - 1]
-        )
-        objective_terms.append(first_last_diff * (-10000))
-
-    # 5. تم إلغاء شرط الحصص المتتالية للمادة داخل الفصل.
-    # لا توجد مكافأة أو عقوبة على كون حصص المادة متجاورة.
+                model.Add(both_lessons <= current_var)
+                model.Add(both_lessons <= next_var)
+                model.Add(both_lessons >= current_var + next_var - 1)
+                objective_terms.append(both_lessons * -5)
 
     # 6. تفادي الحصص غير المفضلة للمعلمين (ساعات الرضاعة)
     for item in clean_assignments:
@@ -1173,15 +790,8 @@ def generate_timetable():
                                 schedule[(idx, c, s, t, r, d, p)] * (-UNWANTED_PERIOD_PENALTY)
                             )
 
-    # 7. تفضيل ألا يزيد نصاب المعلم اليومي عن 4 حصص قدر الإمكان
-    # هذا شرط مرن (Soft Constraint): إذا تعارض مع القيود الأساسية
-    # أو جعل الجدول غير ممكن، يسمح Solver بأكثر من 4 حصص مع غرامة.
-    TEACHER_MAX_DAILY_PREFERRED = 4
-    TEACHER_OVERLOAD_PENALTY = 4000
-
-    # 8. عدالة توزيع حصص المعلمين على أيام العمل (أعلى أولوية)
-    # نستخدم غرامة كبيرة للتفاوت بين الأيام حتى يفضل Solver توزيع
-    # النصاب بصورة متقاربة: مثل 1،1،1،1،2 أفضل من 0،1،1،1،3.
+    # 7. عدالة توزيع حصص المعلمين على أيام العمل (تقليل التباين بين الأيام)
+    TEACHER_LOAD_BALANCE_PENALTY = 40  # غرامة التفاوت بين أيام المعلم الواحد
 
     for teacher_name in teachers:
         off_days = teacher_off_days.get(teacher_name, [])
@@ -1212,16 +822,6 @@ def generate_timetable():
                 model.Add(teacher_daily_loads[d] == sum(day_lessons))
             else:
                 model.Add(teacher_daily_loads[d] == 0)
-
-            # غرامة مرنة على الحصص التي تتجاوز 4 حصص في اليوم.
-            # لا نمنع الحصة الخامسة/السادسة Hard Constraint؛ فقط نجعل Solver
-            # يتجنبها قدر الإمكان، مع الحفاظ على إمكانية إيجاد جدول صالح.
-            overload = model.NewIntVar(
-                0, num_periods, f"t_overload_{teacher_name}_{d}"
-            )
-            model.Add(overload >= teacher_daily_loads[d] - TEACHER_MAX_DAILY_PREFERRED)
-            model.Add(overload >= 0)
-            objective_terms.append(overload * (-TEACHER_OVERLOAD_PENALTY))
 
         for i in range(len(work_days_indices)):
             for j in range(i + 1, len(work_days_indices)):
@@ -1425,201 +1025,6 @@ def generate_timetable():
             ws_master.column_dimensions[
                 get_column_letter(column[0].column)
             ].width = max(max_len + 4, 15)
-
-        # --------------------------------------------------------
-        # شيت شامل للمعلمين: صف لكل معلم + الأيام والحصص كأعمدة
-        # مع تلوين كل فصل بلون ثابت لسهولة القراءة.
-        # --------------------------------------------------------
-        ws_teachers = wb_master.create_sheet("جداول_المعلمين")
-        ws_teachers.sheet_view.rightToLeft = True
-        ws_teachers.sheet_view.showGridLines = False
-
-        # ألوان ثابتة للفصول (تتكرر إذا زاد عدد الفصول عن عدد الألوان)
-        class_palette = [
-            "FFF2CC", "D9EAD3", "CFE2F3", "F4CCCC", "D9D2E9",
-            "FCE5CD", "D0E0E3", "EAD1DC", "DDEBF7", "E2F0D9",
-            "FFF2F2", "EDE7F6", "FFF4CC", "DDEBF7", "FCE4D6",
-            "E2EFDA", "F4CCCC", "D9E1F2", "E4DFEC", "FCE5CD"
-        ]
-        class_colors = {}
-        for idx, cls in enumerate(sorted(classes, key=lambda x: str(x))):
-            class_colors[str(cls).strip()] = class_palette[idx % len(class_palette)]
-
-        # استخراج أسماء جميع المعلمين
-        all_teachers = set()
-        for teacher_cell in df_result.get("المدرس", pd.Series(dtype=str)).astype(str):
-            for teacher in teacher_cell.split("/"):
-                teacher = teacher.strip()
-                if teacher and teacher.lower() != "nan":
-                    all_teachers.add(teacher)
-        all_teachers = sorted(all_teachers, key=lambda x: str(x))
-
-        # عنوان الجدول
-        fixed_cols = 3  # م - المعلم/ة - المادة
-        total_cols = fixed_cols + len(days) * len(periods)
-        ws_teachers.merge_cells(
-            start_row=1, start_column=1, end_row=1, end_column=total_cols
-        )
-        title_cell = ws_teachers.cell(
-            1, 1, f"{school_name} - الجدول المدرسي الشامل للمعلمين"
-        )
-        title_cell.font = Font(name="Segoe UI", size=16, bold=True, color="FFFFFF")
-        title_cell.alignment = center
-        title_cell.fill = header_fill
-        ws_teachers.row_dimensions[1].height = 34
-
-        # الصف الثاني: أسماء الأيام
-        for col in range(1, fixed_cols + 1):
-            ws_teachers.merge_cells(start_row=2, start_column=col, end_row=3, end_column=col)
-
-        fixed_headers = ["م", "المعلم/ة", "المادة"]
-        for col, text in enumerate(fixed_headers, start=1):
-            cell = ws_teachers.cell(2, col, text)
-            cell.font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-            cell.alignment = center
-            cell.fill = header_fill
-            cell.border = thin_border
-
-        current_col = fixed_cols + 1
-        for day in days:
-            start_col = current_col
-            end_col = current_col + len(periods) - 1
-            ws_teachers.merge_cells(
-                start_row=2, start_column=start_col,
-                end_row=2, end_column=end_col
-            )
-            day_cell = ws_teachers.cell(2, start_col, day)
-            day_cell.font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-            day_cell.alignment = center
-            day_cell.fill = header_fill
-            day_cell.border = thin_border
-
-            for p_idx, period in enumerate(periods):
-                cell = ws_teachers.cell(3, start_col + p_idx, period)
-                cell.font = Font(name="Segoe UI", size=9, bold=True, color="FFFFFF")
-                cell.alignment = center
-                cell.fill = sub_header_fill
-                cell.border = thin_border
-            current_col = end_col + 1
-
-        # إعداد بيانات كل معلم مرة واحدة
-        teacher_data = {}
-        for teacher in all_teachers:
-            teacher_df = df_result[
-                df_result["المدرس"].astype(str).apply(
-                    lambda x: teacher in [part.strip() for part in x.split("/")]
-                )
-            ].copy()
-            teacher_data[teacher] = teacher_df
-
-        # صف لكل معلم
-        for teacher_idx, teacher in enumerate(all_teachers, start=1):
-            row_num = 3 + teacher_idx
-            teacher_df = teacher_data[teacher]
-
-            # المادة/المواد التي يدرسها المعلم
-            subjects = []
-            for value in teacher_df.get("المادة", pd.Series(dtype=str)).astype(str):
-                value = value.strip()
-                if value and value.lower() != "nan" and value not in subjects:
-                    subjects.append(value)
-            subject_text = " / ".join(subjects)
-
-            ws_teachers.cell(row_num, 1, teacher_idx)
-            ws_teachers.cell(row_num, 2, teacher)
-            ws_teachers.cell(row_num, 3, subject_text)
-
-            for col in range(1, fixed_cols + 1):
-                cell = ws_teachers.cell(row_num, col)
-                cell.font = Font(name="Segoe UI", size=9, bold=True)
-                cell.alignment = center
-                cell.border = thin_border
-                if col == 2:
-                    cell.fill = title_fill
-
-            # حصص المعلم
-            current_col = fixed_cols + 1
-            for day in days:
-                for period in periods:
-                    match = teacher_df[
-                        (teacher_df["اليوم"] == day)
-                        & (teacher_df["الحصة"] == period)
-                    ]
-
-                    cell = ws_teachers.cell(row_num, current_col)
-                    cell.alignment = center
-                    cell.border = thin_border
-                    cell.font = Font(name="Segoe UI", size=8, bold=True)
-
-                    if not match.empty:
-                        entries = []
-                        first_class = None
-                        for _, item in match.iterrows():
-                            cls_text = str(item.get("الفصل", "")).strip()
-                            # إذا كان هناك أكثر من فصل في نفس الحصة، نحاول إظهارهم جميعًا
-                            cls_parts = [x.strip() for x in cls_text.split(",") if x.strip()]
-                            entries.extend(cls_parts)
-                            if first_class is None and cls_parts:
-                                first_class = cls_parts[0]
-
-                        # إزالة التكرار مع الحفاظ على الترتيب
-                        unique_entries = list(dict.fromkeys(entries))
-                        cell.value = "\n".join(unique_entries)
-
-                        # تلوين الخلية حسب الفصل
-                        if len(unique_entries) == 1:
-                            color = class_colors.get(unique_entries[0])
-                            if color:
-                                cell.fill = PatternFill(fill_type="solid", fgColor=color)
-                        elif unique_entries:
-                            # عند وجود أكثر من فصل، استخدم لون الفصل الأول مع خط عريض
-                            color = class_colors.get(first_class)
-                            if color:
-                                cell.fill = PatternFill(fill_type="solid", fgColor=color)
-                            cell.font = Font(name="Segoe UI", size=8, bold=True)
-                    else:
-                        cell.value = ""
-
-                    current_col += 1
-
-            ws_teachers.row_dimensions[row_num].height = 38
-
-        # أبعاد الأعمدة
-        ws_teachers.column_dimensions["A"].width = 6
-        ws_teachers.column_dimensions["B"].width = 22
-        ws_teachers.column_dimensions["C"].width = 18
-        for col_idx in range(fixed_cols + 1, total_cols + 1):
-            ws_teachers.column_dimensions[get_column_letter(col_idx)].width = 10
-
-        # تجميد العناوين والأعمدة الثابتة
-        ws_teachers.freeze_panes = "D4"
-
-        # --------------------------------------------------------
-        # مفتاح ألوان الفصول أسفل الجدول
-        # --------------------------------------------------------
-        legend_start = 5 + len(all_teachers)
-        ws_teachers.cell(legend_start, 1, "مفتاح ألوان الفصول")
-        ws_teachers.cell(legend_start, 1).font = Font(
-            name="Segoe UI", size=10, bold=True, color="FFFFFF"
-        )
-        ws_teachers.cell(legend_start, 1).fill = header_fill
-        ws_teachers.cell(legend_start, 1).alignment = center
-        ws_teachers.cell(legend_start, 1).border = thin_border
-
-        legend_col = 2
-        for cls in sorted(classes, key=lambda x: str(x)):
-            cls_text = str(cls).strip()
-            cell = ws_teachers.cell(legend_start, legend_col, cls_text)
-            cell.font = Font(name="Segoe UI", size=9, bold=True)
-            cell.alignment = center
-            cell.border = thin_border
-            color = class_colors.get(cls_text)
-            if color:
-                cell.fill = PatternFill(fill_type="solid", fgColor=color)
-            legend_col += 1
-            if legend_col > total_cols:
-                legend_col = 2
-                legend_start += 1
 
         wb_master.save(master_table_file)
         print(f"📘 تم إنشاء ملف All Classes: {master_table_file}")
