@@ -1393,6 +1393,172 @@ def generate_timetable():
                 get_column_letter(column[0].column)
             ].width = max(max_len + 4, 15)
 
+        # --------------------------------------------------------
+        # إعدادات الطباعة لجدول الفصول الشامل
+        # --------------------------------------------------------
+        ws_master.sheet_view.rightToLeft = True
+        ws_master.page_setup.orientation = "landscape"
+        ws_master.page_setup.paperSize = ws_master.PAPERSIZE_A4
+        ws_master.page_setup.fitToWidth = 1
+        ws_master.page_setup.fitToHeight = 1
+        ws_master.sheet_properties.pageSetUpPr.fitToPage = True
+        ws_master.page_margins.left = 0.25
+        ws_master.page_margins.right = 0.25
+        ws_master.page_margins.top = 0.35
+        ws_master.page_margins.bottom = 0.35
+        ws_master.page_margins.header = 0.15
+        ws_master.page_margins.footer = 0.15
+        ws_master.print_options.horizontalCentered = True
+        ws_master.print_title_rows = "$1:$4"
+
+        # --------------------------------------------------------
+        # شيت جديد: جدول جميع معلمي المدرسة
+        # كل معلم في جدول مستقل، وكل جدول يبدأ في صفحة طباعة جديدة
+        # --------------------------------------------------------
+        ws_teachers = wb_master.create_sheet("جداول_المعلمين")
+        ws_teachers.sheet_view.rightToLeft = True
+        ws_teachers.page_setup.orientation = "landscape"
+        ws_teachers.page_setup.paperSize = ws_teachers.PAPERSIZE_A4
+        ws_teachers.page_setup.fitToWidth = 1
+        ws_teachers.page_setup.fitToHeight = 0
+        ws_teachers.sheet_properties.pageSetUpPr.fitToPage = True
+        ws_teachers.page_margins.left = 0.25
+        ws_teachers.page_margins.right = 0.25
+        ws_teachers.page_margins.top = 0.35
+        ws_teachers.page_margins.bottom = 0.35
+        ws_teachers.page_margins.header = 0.15
+        ws_teachers.page_margins.footer = 0.15
+        ws_teachers.print_options.horizontalCentered = True
+
+        # استخراج أسماء جميع المعلمين من نتيجة الجدول
+        all_teachers = set()
+        for teacher_cell in df_result.get("المدرس", pd.Series(dtype=str)).astype(str):
+            for teacher in teacher_cell.split("/"):
+                teacher = teacher.strip()
+                if teacher and teacher.lower() != "nan":
+                    all_teachers.add(teacher)
+
+        all_teachers = sorted(all_teachers, key=lambda x: str(x))
+
+        teacher_last_row = 0
+        for teacher_index, teacher in enumerate(all_teachers, start=1):
+            # عنوان المدرسة والمعلم
+            title_row = teacher_last_row + 1
+            header_row = title_row + 1
+            data_start_row = header_row + 1
+            data_end_row = data_start_row + len(days) - 1
+
+            teacher_end_col = 1 + len(periods)
+            teacher_end_letter = get_column_letter(teacher_end_col)
+
+            ws_teachers.merge_cells(
+                start_row=title_row,
+                start_column=1,
+                end_row=title_row,
+                end_column=teacher_end_col,
+            )
+            title_cell = ws_teachers.cell(
+                title_row,
+                1,
+                f"{school_name} - جدول المعلم/ة: {teacher}",
+            )
+            title_cell.font = Font(
+                name="Segoe UI", size=14, bold=True, color="4F46E5"
+            )
+            title_cell.alignment = center
+            title_cell.fill = title_fill
+            ws_teachers.row_dimensions[title_row].height = 34
+
+            # رأس الجدول
+            corner = ws_teachers.cell(header_row, 1, "اليوم \\ الحصة")
+            corner.font = Font(
+                name="Segoe UI", size=10, bold=True, color="FFFFFF"
+            )
+            corner.alignment = center
+            corner.fill = header_fill
+            corner.border = thin_border
+
+            for p_idx, period in enumerate(periods, start=2):
+                cell = ws_teachers.cell(header_row, p_idx, period)
+                cell.font = Font(
+                    name="Segoe UI", size=10, bold=True, color="FFFFFF"
+                )
+                cell.alignment = center
+                cell.fill = sub_header_fill
+                cell.border = thin_border
+
+            # بيانات المعلم يومًا بيوم
+            teacher_df = df_result[
+                df_result["المدرس"].astype(str).apply(
+                    lambda x: teacher in [part.strip() for part in x.split("/")]
+                )
+            ].copy()
+
+            for d_idx, day in enumerate(days):
+                row_num = data_start_row + d_idx
+                day_cell = ws_teachers.cell(row_num, 1, day)
+                day_cell.font = Font(
+                    name="Segoe UI", size=10, bold=True, color="1F4E78"
+                )
+                day_cell.alignment = center
+                day_cell.fill = title_fill
+                day_cell.border = thin_border
+
+                for p_idx, period in enumerate(periods, start=2):
+                    match = teacher_df[
+                        (teacher_df["اليوم"] == day)
+                        & (teacher_df["الحصة"] == period)
+                    ]
+
+                    if not match.empty:
+                        entries = []
+                        for _, item in match.iterrows():
+                            cls = str(item.get("الفصل", "")).strip()
+                            subject = str(item.get("المادة", "")).strip()
+                            entries.append(f"{cls}\n{subject}")
+                        value = "\n---\n".join(entries)
+                    else:
+                        value = "متاحة"
+
+                    cell = ws_teachers.cell(row_num, p_idx, value)
+                    cell.alignment = center
+                    cell.border = thin_border
+                    cell.font = Font(name="Segoe UI", size=9, bold=True)
+
+                ws_teachers.row_dimensions[row_num].height = 42
+
+            # أحجام الأعمدة المناسبة للطباعة
+            ws_teachers.column_dimensions["A"].width = 13
+            for col_idx in range(2, teacher_end_col + 1):
+                ws_teachers.column_dimensions[get_column_letter(col_idx)].width = 18
+
+            # كل جدول معلم في صفحة مستقلة عند الطباعة
+            if teacher_index < len(all_teachers):
+                ws_teachers.row_breaks.append(Break(id=data_end_row))
+
+            teacher_last_row = data_end_row + 1
+
+        if all_teachers:
+            ws_teachers.print_area = f"A1:{teacher_end_letter}{teacher_last_row - 1}"
+
+        # إعدادات الطباعة لكل جداول المعلمين
+        ws_teachers.sheet_view.showGridLines = False
+
+        # --------------------------------------------------------
+        # تطبيق إعدادات Landscape + RTL على كل شيت في ملف الجدول الشامل
+        # --------------------------------------------------------
+        for ws in wb_master.worksheets:
+            ws.sheet_view.rightToLeft = True
+            ws.page_setup.orientation = "landscape"
+            ws.page_setup.paperSize = ws.PAPERSIZE_A4
+            ws.page_margins.left = 0.25
+            ws.page_margins.right = 0.25
+            ws.page_margins.top = 0.35
+            ws.page_margins.bottom = 0.35
+            ws.page_margins.header = 0.15
+            ws.page_margins.footer = 0.15
+            ws.print_options.horizontalCentered = True
+
         wb_master.save(master_table_file)
         print(f"📘 تم إنشاء ملف All Classes: {master_table_file}")
 
