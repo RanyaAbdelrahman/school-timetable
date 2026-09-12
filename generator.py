@@ -1,10 +1,10 @@
 
 import re
+import os
 import sys
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.pagebreak import Break
 from ortools.sat.python import cp_model
 import pandas as pd
 
@@ -1395,41 +1395,11 @@ def generate_timetable():
             ].width = max(max_len + 4, 15)
 
         # --------------------------------------------------------
-        # إعدادات الطباعة لجدول الفصول الشامل
-        # --------------------------------------------------------
-        ws_master.sheet_view.rightToLeft = True
-        ws_master.page_setup.orientation = "landscape"
-        ws_master.page_setup.paperSize = ws_master.PAPERSIZE_A4
-        ws_master.page_setup.fitToWidth = 1
-        ws_master.page_setup.fitToHeight = 1
-        ws_master.sheet_properties.pageSetUpPr.fitToPage = True
-        ws_master.page_margins.left = 0.25
-        ws_master.page_margins.right = 0.25
-        ws_master.page_margins.top = 0.35
-        ws_master.page_margins.bottom = 0.35
-        ws_master.page_margins.header = 0.15
-        ws_master.page_margins.footer = 0.15
-        ws_master.print_options.horizontalCentered = True
-        ws_master.print_title_rows = "$1:$4"
-
-        # --------------------------------------------------------
         # شيت جديد: جدول جميع معلمي المدرسة
         # كل معلم في جدول مستقل، وكل جدول يبدأ في صفحة طباعة جديدة
         # --------------------------------------------------------
         ws_teachers = wb_master.create_sheet("جداول_المعلمين")
         ws_teachers.sheet_view.rightToLeft = True
-        ws_teachers.page_setup.orientation = "landscape"
-        ws_teachers.page_setup.paperSize = ws_teachers.PAPERSIZE_A4
-        ws_teachers.page_setup.fitToWidth = 1
-        ws_teachers.page_setup.fitToHeight = 0
-        ws_teachers.sheet_properties.pageSetUpPr.fitToPage = True
-        ws_teachers.page_margins.left = 0.25
-        ws_teachers.page_margins.right = 0.25
-        ws_teachers.page_margins.top = 0.35
-        ws_teachers.page_margins.bottom = 0.35
-        ws_teachers.page_margins.header = 0.15
-        ws_teachers.page_margins.footer = 0.15
-        ws_teachers.print_options.horizontalCentered = True
 
         # استخراج أسماء جميع المعلمين من نتيجة الجدول
         all_teachers = set()
@@ -1532,33 +1502,12 @@ def generate_timetable():
             ws_teachers.column_dimensions["A"].width = 13
             for col_idx in range(2, teacher_end_col + 1):
                 ws_teachers.column_dimensions[get_column_letter(col_idx)].width = 18
-
-            # كل جدول معلم في صفحة مستقلة عند الطباعة
-            if teacher_index < len(all_teachers):
-                ws_teachers.row_breaks.append(Break(id=data_end_row))
-
             teacher_last_row = data_end_row + 1
-
-        if all_teachers:
-            ws_teachers.print_area = f"A1:{teacher_end_letter}{teacher_last_row - 1}"
 
         # إعدادات الطباعة لكل جداول المعلمين
         ws_teachers.sheet_view.showGridLines = False
-
-        # --------------------------------------------------------
-        # تطبيق إعدادات Landscape + RTL على كل شيت في ملف الجدول الشامل
-        # --------------------------------------------------------
         for ws in wb_master.worksheets:
             ws.sheet_view.rightToLeft = True
-            ws.page_setup.orientation = "landscape"
-            ws.page_setup.paperSize = ws.PAPERSIZE_A4
-            ws.page_margins.left = 0.25
-            ws.page_margins.right = 0.25
-            ws.page_margins.top = 0.35
-            ws.page_margins.bottom = 0.35
-            ws.page_margins.header = 0.15
-            ws.page_margins.footer = 0.15
-            ws.print_options.horizontalCentered = True
 
         wb_master.save(master_table_file)
         print(f"📘 تم إنشاء ملف All Classes: {master_table_file}")
