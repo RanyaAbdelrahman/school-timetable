@@ -809,121 +809,6 @@ def generate_timetable():
     # وينطبق الشرط على أي عدد من الحصص لنفس المادة في اليوم.
     # ========================================================
 
-    subject_by_class = {}
-
-    for item in clean_assignments:
-        subject_name = str(item["s"] or "").strip()
-        if not subject_name:
-            continue
-
-        item_classes = [
-            x.strip() for x in str(item["c"]).split(",") if x.strip()
-        ]
-
-        # استخدام اسم المادة بشكل موحد حتى لا تختلف المسافات فقط.
-        subject_key = subject_name.lower()
-
-        for class_name in item_classes:
-            subject_by_class.setdefault(
-                (class_name, subject_key),
-                {"name": subject_name, "items": []},
-            )["items"].append(item)
-
-    for (class_name, subject_key), group in subject_by_class.items():
-        subject_items = group["items"]
-
-        # شرط التتابع يطبق فقط إذا كان إجمالي حصص المادة لهذا الفصل
-        # في الأسبوع أكبر من 6 حصص. المواد التي لها 6 حصص أو أقل
-        # تظل حصصها موزعة وبدون إجبار على التتابع.
-        weekly_subject_lessons = sum(int(item.get("w", 0) or 0) for item in subject_items)
-        if weekly_subject_lessons <= 6:
-            continue
-
-        for d in range(num_days):
-            subject_period_vars = []
-
-            for p in range(num_periods):
-                period_vars = []
-
-                for item in subject_items:
-                    item_classes = [
-                        x.strip()
-                        for x in str(item["c"]).split(",")
-                        if x.strip()
-                    ]
-
-                    if class_name not in item_classes:
-                        continue
-
-                    period_vars.append(
-                        schedule[(
-                            item["idx"],
-                            item["c"],
-                            item["s"],
-                            item["t"],
-                            item["r"],
-                            d,
-                            p,
-                        )]
-                    )
-
-                subject_var = model.NewBoolVar(
-                    f"subject_day_{class_name}_{subject_key}_{d}_{p}"
-                )
-
-                if period_vars:
-                    # تعارض الفصل يضمن أن المجموع لن يتجاوز 1.
-                    model.Add(subject_var == sum(period_vars))
-                else:
-                    model.Add(subject_var == 0)
-
-                subject_period_vars.append(subject_var)
-
-            # ----------------------------------------------------
-            # منع وجود أكثر من مجموعة منفصلة للمادة في اليوم.
-            # ----------------------------------------------------
-            start_vars = []
-            end_vars = []
-
-            for p in range(num_periods):
-                start_var = model.NewBoolVar(
-                    f"subject_start_{class_name}_{subject_key}_{d}_{p}"
-                )
-                end_var = model.NewBoolVar(
-                    f"subject_end_{class_name}_{subject_key}_{d}_{p}"
-                )
-
-                current = subject_period_vars[p]
-
-                # بداية مجموعة المادة:
-                # current = 1 والسابق = 0 (أو لا يوجد سابق في أول حصة).
-                if p == 0:
-                    model.Add(start_var == current)
-                else:
-                    previous = subject_period_vars[p - 1]
-                    model.Add(start_var <= current)
-                    model.Add(start_var <= 1 - previous)
-                    model.Add(start_var >= current - previous)
-
-                # نهاية مجموعة المادة:
-                # current = 1 واللاحق = 0 (أو لا يوجد لاحق في آخر حصة).
-                if p == num_periods - 1:
-                    model.Add(end_var == current)
-                else:
-                    next_var = subject_period_vars[p + 1]
-                    model.Add(end_var <= current)
-                    model.Add(end_var <= 1 - next_var)
-                    model.Add(end_var >= current - next_var)
-
-                start_vars.append(start_var)
-                end_vars.append(end_var)
-
-            # في اليوم الواحد لا يمكن أن توجد أكثر من مجموعة واحدة
-            # من نفس المادة، وبالتالي إذا وُجدت حصتان أو أكثر
-            # فستكون متجاورة بالضرورة.
-            model.Add(sum(start_vars) <= 1)
-            model.Add(sum(end_vars) <= 1)
-
     # ========================================================
     # الإشراف: المعلم المحدد له يوم إشراف يجب أن يأخذ الحصة الأخيرة
     # في ذلك اليوم. هذا شرط إجباري (Hard Constraint).
@@ -989,57 +874,31 @@ def generate_timetable():
     # ========================================================
 
     objective_terms = []
-    SUBJECT_DISTRIBUTION_PENALTY = 30
+
+    # ========================================================
+    # أوزان القيود المرنة
+    # ========================================================
+    SUBJECT_DISTRIBUTION_PENALTY = 45
+    SUBJECT_DAY_SPREAD_BONUS = 90
+    SAME_SUBJECT_CONSECUTIVE_BONUS = 35
     UNWANTED_PERIOD_PENALTY = 40
+
+    # عدالة توزيع مواد المعلم على أيام الأسبوع.
+    # لا نغير النصاب الأسبوعي الثابت للمعلم؛ فقط نفضل توزيع كل مادة
+    # التي يدرسها على أيام العمل بصورة أكثر عدالة.
+    TEACHER_SUBJECT_DAY_BALANCE_PENALTY = 25
+
+    # تنوع حصص المعلم بين الحصة الأولى والأخيرة.
+    # نكافئ استخدام الحصص المختلفة ونقلل التفاوت الكبير في عدد مرات
+    # وضع المعلم في نفس رقم الحصة خلال الأسبوع.
+    TEACHER_PERIOD_DIVERSITY_BONUS = 45
+    TEACHER_PERIOD_BALANCE_PENALTY = 18
+
 
     # 1. تفضيل الحصص المبكرة
     for (idx, c, s, t, r, d, p), var in schedule.items():
         weight = (num_periods - p) * 10
         objective_terms.append(var * weight)
-
-    # 2. عدالة توزيع المواد داخل الفصول على الأيام
-    class_subject_groups = {}
-    for item in clean_assignments:
-        class_names = [x.strip() for x in item["c"].split(",") if x.strip()]
-        for class_name in class_names:
-            key = (class_name, item["s"])
-            if key not in class_subject_groups:
-                class_subject_groups[key] = []
-            class_subject_groups[key].append(item)
-
-    for (class_name, subject), items in class_subject_groups.items():
-        daily_load = {}
-        for d in range(num_days):
-            lesson_vars = []
-            for item in items:
-                idx = item["idx"]
-                c = item["c"]
-                s = item["s"]
-                t = item["t"]
-                r = item["r"]
-                item_classes = [x.strip() for x in c.split(",") if x.strip()]
-
-                if class_name in item_classes:
-                    for p in range(num_periods):
-                        lesson_vars.append(
-                            schedule[(idx, c, s, t, r, d, p)]
-                        )
-
-            daily_load[d] = model.NewIntVar(
-                0, len(lesson_vars), f"subject_load_{class_name}_{subject}_{d}"
-            )
-            if lesson_vars:
-                model.Add(daily_load[d] == sum(lesson_vars))
-            else:
-                model.Add(daily_load[d] == 0)
-
-        for d1 in range(num_days):
-            for d2 in range(d1 + 1, num_days):
-                difference = model.NewIntVar(
-                    0, num_periods * len(items), f"subject_diff_{class_name}_{subject}_{d1}_{d2}"
-                )
-                model.AddAbsEquality(difference, daily_load[d1] - daily_load[d2])
-                objective_terms.append(difference * (-SUBJECT_DISTRIBUTION_PENALTY))
 
     # 3. توزيع حصص المواد على الأيام المختلفة
     for item in clean_assignments:
@@ -1101,6 +960,130 @@ def generate_timetable():
                     teacher_day_has_lessons[d].Not()
                 )
                 objective_terms.append(teacher_day_has_lessons[d] * 50)
+
+    # 4-أ. عدالة توزيع مواد المعلم على مدار الأسبوع.
+    # لكل (معلم، مادة) نقلل التفاوت في عدد حصص المادة بين أيام العمل.
+    teacher_subject_groups = {}
+    for item in clean_assignments:
+        assignment_teachers = [
+            x.strip() for x in item["t"].split("/") if x.strip()
+        ]
+        for teacher_name in assignment_teachers:
+            key = (teacher_name, item["s"])
+            teacher_subject_groups.setdefault(key, []).append(item)
+
+    for (teacher_name, subject), items in teacher_subject_groups.items():
+        off_days = teacher_off_days.get(teacher_name, [])
+        work_days_indices = [
+            d for d in range(num_days) if days[d] not in off_days
+        ]
+
+        if len(work_days_indices) <= 1:
+            continue
+
+        subject_daily_loads = {}
+        for d in work_days_indices:
+            day_vars = []
+            for item in items:
+                for p in range(num_periods):
+                    day_vars.append(
+                        schedule[(
+                            item["idx"], item["c"], item["s"], item["t"],
+                            item["r"], d, p
+                        )]
+                    )
+
+            subject_daily_loads[d] = model.NewIntVar(
+                0, num_periods * max(1, len(items)),
+                f"teacher_subject_load_{teacher_name}_{subject}_{d}"
+            )
+            if day_vars:
+                model.Add(subject_daily_loads[d] == sum(day_vars))
+            else:
+                model.Add(subject_daily_loads[d] == 0)
+
+        for i in range(len(work_days_indices)):
+            for j in range(i + 1, len(work_days_indices)):
+                d1 = work_days_indices[i]
+                d2 = work_days_indices[j]
+                diff = model.NewIntVar(
+                    0, num_periods * max(1, len(items)),
+                    f"teacher_subject_diff_{teacher_name}_{subject}_{d1}_{d2}"
+                )
+                model.AddAbsEquality(
+                    diff,
+                    subject_daily_loads[d1] - subject_daily_loads[d2]
+                )
+                objective_terms.append(
+                    diff * (-TEACHER_SUBJECT_DAY_BALANCE_PENALTY)
+                )
+
+    # 4-ب. تنويع أرقام الحصص للمعلم من الأولى حتى الأخيرة.
+    # نفضل ألا يكون المعلم محصورًا في رقم حصة واحد أو رقمين طوال الأسبوع.
+    for teacher_name in teachers:
+        off_days = teacher_off_days.get(teacher_name, [])
+        work_days_indices = [
+            d for d in range(num_days) if days[d] not in off_days
+        ]
+
+        if not work_days_indices:
+            continue
+
+        teacher_period_loads = {}
+        teacher_period_used = {}
+
+        for p in range(num_periods):
+            period_vars = []
+            for item in clean_assignments:
+                assignment_teachers = [
+                    x.strip() for x in item["t"].split("/") if x.strip()
+                ]
+                if teacher_name in assignment_teachers:
+                    for d in work_days_indices:
+                        period_vars.append(
+                            schedule[(
+                                item["idx"], item["c"], item["s"], item["t"],
+                                item["r"], d, p
+                            )]
+                        )
+
+            teacher_period_loads[p] = model.NewIntVar(
+                0, num_days * max(1, len(clean_assignments)),
+                f"teacher_period_load_{teacher_name}_{p}"
+            )
+            if period_vars:
+                model.Add(teacher_period_loads[p] == sum(period_vars))
+            else:
+                model.Add(teacher_period_loads[p] == 0)
+
+            teacher_period_used[p] = model.NewBoolVar(
+                f"teacher_period_used_{teacher_name}_{p}"
+            )
+            model.Add(
+                teacher_period_loads[p] >= 1
+            ).OnlyEnforceIf(teacher_period_used[p])
+            model.Add(
+                teacher_period_loads[p] == 0
+            ).OnlyEnforceIf(teacher_period_used[p].Not())
+
+            objective_terms.append(
+                teacher_period_used[p] * TEACHER_PERIOD_DIVERSITY_BONUS
+            )
+
+        # تقليل التفاوت بين أرقام الحصص المختلفة.
+        for p1 in range(num_periods):
+            for p2 in range(p1 + 1, num_periods):
+                diff = model.NewIntVar(
+                    0, num_days * max(1, len(clean_assignments)),
+                    f"teacher_period_diff_{teacher_name}_{p1}_{p2}"
+                )
+                model.AddAbsEquality(
+                    diff,
+                    teacher_period_loads[p1] - teacher_period_loads[p2]
+                )
+                objective_terms.append(
+                    diff * (-TEACHER_PERIOD_BALANCE_PENALTY)
+                )
 
     # 5. تقليل الحصص المتتالية لنفس Assignment
     for item in clean_assignments:
