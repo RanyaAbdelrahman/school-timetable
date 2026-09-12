@@ -1395,119 +1395,199 @@ def generate_timetable():
             ].width = max(max_len + 4, 15)
 
         # --------------------------------------------------------
-        # شيت جديد: جدول جميع معلمي المدرسة
-        # كل معلم في جدول مستقل، وكل جدول يبدأ في صفحة طباعة جديدة
+        # شيت شامل للمعلمين: صف لكل معلم + الأيام والحصص كأعمدة
+        # مع تلوين كل فصل بلون ثابت لسهولة القراءة.
         # --------------------------------------------------------
         ws_teachers = wb_master.create_sheet("جداول_المعلمين")
         ws_teachers.sheet_view.rightToLeft = True
+        ws_teachers.sheet_view.showGridLines = False
 
-        # استخراج أسماء جميع المعلمين من نتيجة الجدول
+        # ألوان ثابتة للفصول (تتكرر إذا زاد عدد الفصول عن عدد الألوان)
+        class_palette = [
+            "FFF2CC", "D9EAD3", "CFE2F3", "F4CCCC", "D9D2E9",
+            "FCE5CD", "D0E0E3", "EAD1DC", "DDEBF7", "E2F0D9",
+            "FFF2F2", "EDE7F6", "FFF4CC", "DDEBF7", "FCE4D6",
+            "E2EFDA", "F4CCCC", "D9E1F2", "E4DFEC", "FCE5CD"
+        ]
+        class_colors = {}
+        for idx, cls in enumerate(sorted(classes, key=lambda x: str(x))):
+            class_colors[str(cls).strip()] = class_palette[idx % len(class_palette)]
+
+        # استخراج أسماء جميع المعلمين
         all_teachers = set()
         for teacher_cell in df_result.get("المدرس", pd.Series(dtype=str)).astype(str):
             for teacher in teacher_cell.split("/"):
                 teacher = teacher.strip()
                 if teacher and teacher.lower() != "nan":
                     all_teachers.add(teacher)
-
         all_teachers = sorted(all_teachers, key=lambda x: str(x))
 
-        teacher_last_row = 0
-        for teacher_index, teacher in enumerate(all_teachers, start=1):
-            # عنوان المدرسة والمعلم
-            title_row = teacher_last_row + 1
-            header_row = title_row + 1
-            data_start_row = header_row + 1
-            data_end_row = data_start_row + len(days) - 1
+        # عنوان الجدول
+        fixed_cols = 3  # م - المعلم/ة - المادة
+        total_cols = fixed_cols + len(days) * len(periods)
+        ws_teachers.merge_cells(
+            start_row=1, start_column=1, end_row=1, end_column=total_cols
+        )
+        title_cell = ws_teachers.cell(
+            1, 1, f"{school_name} - الجدول المدرسي الشامل للمعلمين"
+        )
+        title_cell.font = Font(name="Segoe UI", size=16, bold=True, color="FFFFFF")
+        title_cell.alignment = center
+        title_cell.fill = header_fill
+        ws_teachers.row_dimensions[1].height = 34
 
-            teacher_end_col = 1 + len(periods)
-            teacher_end_letter = get_column_letter(teacher_end_col)
+        # الصف الثاني: أسماء الأيام
+        for col in range(1, fixed_cols + 1):
+            ws_teachers.merge_cells(start_row=2, start_column=col, end_row=3, end_column=col)
 
+        fixed_headers = ["م", "المعلم/ة", "المادة"]
+        for col, text in enumerate(fixed_headers, start=1):
+            cell = ws_teachers.cell(2, col, text)
+            cell.font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+            cell.alignment = center
+            cell.fill = header_fill
+            cell.border = thin_border
+
+        current_col = fixed_cols + 1
+        for day in days:
+            start_col = current_col
+            end_col = current_col + len(periods) - 1
             ws_teachers.merge_cells(
-                start_row=title_row,
-                start_column=1,
-                end_row=title_row,
-                end_column=teacher_end_col,
+                start_row=2, start_column=start_col,
+                end_row=2, end_column=end_col
             )
-            title_cell = ws_teachers.cell(
-                title_row,
-                1,
-                f"{school_name} - جدول المعلم/ة: {teacher}",
-            )
-            title_cell.font = Font(
-                name="Segoe UI", size=14, bold=True, color="4F46E5"
-            )
-            title_cell.alignment = center
-            title_cell.fill = title_fill
-            ws_teachers.row_dimensions[title_row].height = 34
+            day_cell = ws_teachers.cell(2, start_col, day)
+            day_cell.font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+            day_cell.alignment = center
+            day_cell.fill = header_fill
+            day_cell.border = thin_border
 
-            # رأس الجدول
-            corner = ws_teachers.cell(header_row, 1, "اليوم \\ الحصة")
-            corner.font = Font(
-                name="Segoe UI", size=10, bold=True, color="FFFFFF"
-            )
-            corner.alignment = center
-            corner.fill = header_fill
-            corner.border = thin_border
-
-            for p_idx, period in enumerate(periods, start=2):
-                cell = ws_teachers.cell(header_row, p_idx, period)
-                cell.font = Font(
-                    name="Segoe UI", size=10, bold=True, color="FFFFFF"
-                )
+            for p_idx, period in enumerate(periods):
+                cell = ws_teachers.cell(3, start_col + p_idx, period)
+                cell.font = Font(name="Segoe UI", size=9, bold=True, color="FFFFFF")
                 cell.alignment = center
                 cell.fill = sub_header_fill
                 cell.border = thin_border
+            current_col = end_col + 1
 
-            # بيانات المعلم يومًا بيوم
+        # إعداد بيانات كل معلم مرة واحدة
+        teacher_data = {}
+        for teacher in all_teachers:
             teacher_df = df_result[
                 df_result["المدرس"].astype(str).apply(
                     lambda x: teacher in [part.strip() for part in x.split("/")]
                 )
             ].copy()
+            teacher_data[teacher] = teacher_df
 
-            for d_idx, day in enumerate(days):
-                row_num = data_start_row + d_idx
-                day_cell = ws_teachers.cell(row_num, 1, day)
-                day_cell.font = Font(
-                    name="Segoe UI", size=10, bold=True, color="1F4E78"
-                )
-                day_cell.alignment = center
-                day_cell.fill = title_fill
-                day_cell.border = thin_border
+        # صف لكل معلم
+        for teacher_idx, teacher in enumerate(all_teachers, start=1):
+            row_num = 3 + teacher_idx
+            teacher_df = teacher_data[teacher]
 
-                for p_idx, period in enumerate(periods, start=2):
+            # المادة/المواد التي يدرسها المعلم
+            subjects = []
+            for value in teacher_df.get("المادة", pd.Series(dtype=str)).astype(str):
+                value = value.strip()
+                if value and value.lower() != "nan" and value not in subjects:
+                    subjects.append(value)
+            subject_text = " / ".join(subjects)
+
+            ws_teachers.cell(row_num, 1, teacher_idx)
+            ws_teachers.cell(row_num, 2, teacher)
+            ws_teachers.cell(row_num, 3, subject_text)
+
+            for col in range(1, fixed_cols + 1):
+                cell = ws_teachers.cell(row_num, col)
+                cell.font = Font(name="Segoe UI", size=9, bold=True)
+                cell.alignment = center
+                cell.border = thin_border
+                if col == 2:
+                    cell.fill = title_fill
+
+            # حصص المعلم
+            current_col = fixed_cols + 1
+            for day in days:
+                for period in periods:
                     match = teacher_df[
                         (teacher_df["اليوم"] == day)
                         & (teacher_df["الحصة"] == period)
                     ]
 
-                    if not match.empty:
-                        entries = []
-                        for _, item in match.iterrows():
-                            cls = str(item.get("الفصل", "")).strip()
-                            subject = str(item.get("المادة", "")).strip()
-                            entries.append(f"{cls}\n{subject}")
-                        value = "\n---\n".join(entries)
-                    else:
-                        value = "متاحة"
-
-                    cell = ws_teachers.cell(row_num, p_idx, value)
+                    cell = ws_teachers.cell(row_num, current_col)
                     cell.alignment = center
                     cell.border = thin_border
-                    cell.font = Font(name="Segoe UI", size=9, bold=True)
+                    cell.font = Font(name="Segoe UI", size=8, bold=True)
 
-                ws_teachers.row_dimensions[row_num].height = 42
+                    if not match.empty:
+                        entries = []
+                        first_class = None
+                        for _, item in match.iterrows():
+                            cls_text = str(item.get("الفصل", "")).strip()
+                            # إذا كان هناك أكثر من فصل في نفس الحصة، نحاول إظهارهم جميعًا
+                            cls_parts = [x.strip() for x in cls_text.split(",") if x.strip()]
+                            entries.extend(cls_parts)
+                            if first_class is None and cls_parts:
+                                first_class = cls_parts[0]
 
-            # أحجام الأعمدة المناسبة للطباعة
-            ws_teachers.column_dimensions["A"].width = 13
-            for col_idx in range(2, teacher_end_col + 1):
-                ws_teachers.column_dimensions[get_column_letter(col_idx)].width = 18
-            teacher_last_row = data_end_row + 1
+                        # إزالة التكرار مع الحفاظ على الترتيب
+                        unique_entries = list(dict.fromkeys(entries))
+                        cell.value = "\n".join(unique_entries)
 
-        # إعدادات الطباعة لكل جداول المعلمين
-        ws_teachers.sheet_view.showGridLines = False
-        for ws in wb_master.worksheets:
-            ws.sheet_view.rightToLeft = True
+                        # تلوين الخلية حسب الفصل
+                        if len(unique_entries) == 1:
+                            color = class_colors.get(unique_entries[0])
+                            if color:
+                                cell.fill = PatternFill(fill_type="solid", fgColor=color)
+                        elif unique_entries:
+                            # عند وجود أكثر من فصل، استخدم لون الفصل الأول مع خط عريض
+                            color = class_colors.get(first_class)
+                            if color:
+                                cell.fill = PatternFill(fill_type="solid", fgColor=color)
+                            cell.font = Font(name="Segoe UI", size=8, bold=True)
+                    else:
+                        cell.value = ""
+
+                    current_col += 1
+
+            ws_teachers.row_dimensions[row_num].height = 38
+
+        # أبعاد الأعمدة
+        ws_teachers.column_dimensions["A"].width = 6
+        ws_teachers.column_dimensions["B"].width = 22
+        ws_teachers.column_dimensions["C"].width = 18
+        for col_idx in range(fixed_cols + 1, total_cols + 1):
+            ws_teachers.column_dimensions[get_column_letter(col_idx)].width = 10
+
+        # تجميد العناوين والأعمدة الثابتة
+        ws_teachers.freeze_panes = "D4"
+
+        # --------------------------------------------------------
+        # مفتاح ألوان الفصول أسفل الجدول
+        # --------------------------------------------------------
+        legend_start = 5 + len(all_teachers)
+        ws_teachers.cell(legend_start, 1, "مفتاح ألوان الفصول")
+        ws_teachers.cell(legend_start, 1).font = Font(
+            name="Segoe UI", size=10, bold=True, color="FFFFFF"
+        )
+        ws_teachers.cell(legend_start, 1).fill = header_fill
+        ws_teachers.cell(legend_start, 1).alignment = center
+        ws_teachers.cell(legend_start, 1).border = thin_border
+
+        legend_col = 2
+        for cls in sorted(classes, key=lambda x: str(x)):
+            cls_text = str(cls).strip()
+            cell = ws_teachers.cell(legend_start, legend_col, cls_text)
+            cell.font = Font(name="Segoe UI", size=9, bold=True)
+            cell.alignment = center
+            cell.border = thin_border
+            color = class_colors.get(cls_text)
+            if color:
+                cell.fill = PatternFill(fill_type="solid", fgColor=color)
+            legend_col += 1
+            if legend_col > total_cols:
+                legend_col = 2
+                legend_start += 1
 
         wb_master.save(master_table_file)
         print(f"📘 تم إنشاء ملف All Classes: {master_table_file}")
