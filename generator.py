@@ -883,16 +883,22 @@ def generate_timetable():
     SAME_SUBJECT_CONSECUTIVE_BONUS = 35
     UNWANTED_PERIOD_PENALTY = 40
 
+    # أولوية عدالة توزيع نصاب المعلم على أيام الأسبوع.
+    # هذه أوزان قوية حتى تكون العدالة أهم من تفضيل الحصص المبكرة
+    # أو أي تفضيلات تجميلية أخرى، مع بقاءها Soft وليست Hard.
+    TEACHER_ACTIVE_DAY_BONUS = 2500
+    TEACHER_LOAD_BALANCE_PENALTY = 10000
+
     # عدالة توزيع مواد المعلم على أيام الأسبوع.
     # لا نغير النصاب الأسبوعي الثابت للمعلم؛ فقط نفضل توزيع كل مادة
     # التي يدرسها على أيام العمل بصورة أكثر عدالة.
-    TEACHER_SUBJECT_DAY_BALANCE_PENALTY = 25
+    TEACHER_SUBJECT_DAY_BALANCE_PENALTY = 1200
 
     # تنوع حصص المعلم بين الحصة الأولى والأخيرة.
     # نكافئ استخدام الحصص المختلفة ونقلل التفاوت الكبير في عدد مرات
     # وضع المعلم في نفس رقم الحصة خلال الأسبوع.
-    TEACHER_PERIOD_DIVERSITY_BONUS = 45
-    TEACHER_PERIOD_BALANCE_PENALTY = 18
+    TEACHER_PERIOD_DIVERSITY_BONUS = 120
+    TEACHER_PERIOD_BALANCE_PENALTY = 70
 
 
     # 1. تفضيل الحصص المبكرة
@@ -959,7 +965,7 @@ def generate_timetable():
                 model.Add(sum(teacher_lessons_on_day) == 0).OnlyEnforceIf(
                     teacher_day_has_lessons[d].Not()
                 )
-                objective_terms.append(teacher_day_has_lessons[d] * 50)
+                objective_terms.append(teacher_day_has_lessons[d] * TEACHER_ACTIVE_DAY_BONUS)
 
     # 4-أ. عدالة توزيع مواد المعلم على مدار الأسبوع.
     # لكل (معلم، مادة) نقلل التفاوت في عدد حصص المادة بين أيام العمل.
@@ -1085,24 +1091,50 @@ def generate_timetable():
                     diff * (-TEACHER_PERIOD_BALANCE_PENALTY)
                 )
 
-    # 5. تقليل الحصص المتتالية لنفس Assignment
+    # 5. تتابع حصص المادة داخل الفصل - شرط مرن
+    # إذا كان للفصل أكثر من حصة من نفس المادة في اليوم نفسه،
+    # نكافئ وضع الحصص متجاورة (واحدة وراء الأخرى)، لكن لا نجعل
+    # ذلك شرطًا Hard حتى لا يمنع إيجاد جدول صالح.
+    class_subject_groups = {}
     for item in clean_assignments:
-        idx = item["idx"]
-        c = item["c"]
-        s = item["s"]
-        t = item["t"]
-        r = item["r"]
+        key = (item["c"], item["s"])
+        class_subject_groups.setdefault(key, []).append(item)
 
+    for (class_name, subject), items in class_subject_groups.items():
         for d in range(num_days):
             for p in range(num_periods - 1):
-                both_lessons = model.NewBoolVar(f"both_{idx}_{d}_{p}")
-                current_var = schedule[(idx, c, s, t, r, d, p)]
-                next_var = schedule[(idx, c, s, t, r, d, p + 1)]
+                current_vars = [
+                    schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, p)]
+                    for item in items
+                ]
+                next_vars = [
+                    schedule[(item["idx"], item["c"], item["s"], item["t"], item["r"], d, p + 1)]
+                    for item in items
+                ]
 
-                model.Add(both_lessons <= current_var)
-                model.Add(both_lessons <= next_var)
-                model.Add(both_lessons >= current_var + next_var - 1)
-                objective_terms.append(both_lessons * -5)
+                if current_vars and next_vars:
+                    current_has = model.NewBoolVar(
+                        f"class_subject_current_{class_name}_{subject}_{d}_{p}"
+                    )
+                    next_has = model.NewBoolVar(
+                        f"class_subject_next_{class_name}_{subject}_{d}_{p}"
+                    )
+                    adjacent = model.NewBoolVar(
+                        f"class_subject_adjacent_{class_name}_{subject}_{d}_{p}"
+                    )
+
+                    model.Add(sum(current_vars) >= 1).OnlyEnforceIf(current_has)
+                    model.Add(sum(current_vars) == 0).OnlyEnforceIf(current_has.Not())
+                    model.Add(sum(next_vars) >= 1).OnlyEnforceIf(next_has)
+                    model.Add(sum(next_vars) == 0).OnlyEnforceIf(next_has.Not())
+
+                    model.Add(adjacent <= current_has)
+                    model.Add(adjacent <= next_has)
+                    model.Add(adjacent >= current_has + next_has - 1)
+
+                    objective_terms.append(
+                        adjacent * SAME_SUBJECT_CONSECUTIVE_BONUS
+                    )
 
     # 6. تفادي الحصص غير المفضلة للمعلمين (ساعات الرضاعة)
     for item in clean_assignments:
@@ -1129,10 +1161,11 @@ def generate_timetable():
     # هذا شرط مرن (Soft Constraint): إذا تعارض مع القيود الأساسية
     # أو جعل الجدول غير ممكن، يسمح Solver بأكثر من 4 حصص مع غرامة.
     TEACHER_MAX_DAILY_PREFERRED = 4
-    TEACHER_OVERLOAD_PENALTY = 1500
+    TEACHER_OVERLOAD_PENALTY = 4000
 
-    # 8. عدالة توزيع حصص المعلمين على أيام العمل (تقليل التباين بين الأيام)
-    TEACHER_LOAD_BALANCE_PENALTY = 40  # غرامة التفاوت بين أيام المعلم الواحد
+    # 8. عدالة توزيع حصص المعلمين على أيام العمل (أعلى أولوية)
+    # نستخدم غرامة كبيرة للتفاوت بين الأيام حتى يفضل Solver توزيع
+    # النصاب بصورة متقاربة: مثل 1،1،1،1،2 أفضل من 0،1،1،1،3.
 
     for teacher_name in teachers:
         off_days = teacher_off_days.get(teacher_name, [])
