@@ -1,4 +1,3 @@
-
 import re
 import os
 import sys
@@ -651,14 +650,6 @@ def generate_timetable():
     # ========================================================
     # قيد حصص القرآن الكريم - قيد صارم
     # ========================================================
-    # القاعدة المطلوبة:
-    # - حصص القرآن لنفس الفصل تكون متتالية بلا أي فراغ بينها.
-    # - المجموعة تكون في بداية اليوم أو في نهاية اليوم فقط.
-    #   مثال: 3 حصص قرآن في يوم = 1,2,3 أو 5,6,7
-    #   ولا يمكن أن تكون 2,3,4 أو 1,3,4.
-    # - الحد الأقصى اليومي = ceil(إجمالي حصص القرآن الأسبوعية / عدد الأيام).
-    # - العدد الأسبوعي الفعلي يساوي WeeklyLessons بالضبط.
-    # ========================================================
     import math
 
     quran_by_class = {}
@@ -671,7 +662,6 @@ def generate_timetable():
             or 'quran' in text
         )
 
-    # تجميع كل Assignments الخاصة بالقرآن حسب الفصل.
     for item in clean_assignments:
         if not is_quran_subject(item['s']):
             continue
@@ -687,17 +677,11 @@ def generate_timetable():
             continue
 
         max_quran_per_day = math.ceil(total_quran_lessons / num_days)
-
-        # إذا كان الحد اليومي أكبر من عدد الحصص في اليوم، فالنموذج
-        # لن يستطيع تنفيذ العدد المطلوب أصلًا؛ نترك Solver يحدد عدم الإمكانية.
         max_quran_per_day = min(max_quran_per_day, num_periods)
 
         quran_period_vars = {}
 
         for d in range(num_days):
-            # --------------------------------------------------------
-            # qvar[p] = هل هذه الفترة قرآن لهذا الفصل؟
-            # --------------------------------------------------------
             day_vars = []
 
             for p in range(num_periods):
@@ -732,24 +716,10 @@ def generate_timetable():
                 quran_period_vars[(d, p)] = qvar
                 day_vars.append(qvar)
 
-            # --------------------------------------------------------
-            # قيد صارم لشكل اليوم
-            # --------------------------------------------------------
-            # نختار بالضبط شكلًا واحدًا من الأشكال التالية:
-            # 0 حصص: لا قرآن في هذا اليوم
-            # k حصص في البداية: 1..k
-            # k حصص في النهاية: (N-k+1)..N
-            #
-            # وبالتالي لا يمكن إطلاقًا أن يظهر قرآن في منتصف اليوم
-            # أو أن يكون بين حصتين قرآن حصة أخرى.
-            # --------------------------------------------------------
             mode_vars = []
-
-            # عدم وجود قرآن في هذا اليوم.
             no_quran = model.NewBoolVar(f'quran_no_{class_name}_{d}')
             mode_vars.append(no_quran)
 
-            # بداية اليوم / نهاية اليوم لكل عدد k من 1 إلى الحد الأقصى.
             start_modes = {}
             end_modes = {}
 
@@ -760,23 +730,17 @@ def generate_timetable():
                 end_modes[k] = end_var
                 mode_vars.extend([start_var, end_var])
 
-            # يوم واحد = اختيار شكل واحد فقط.
             model.Add(sum(mode_vars) == 1)
 
-            # كل فترة قرآن يجب أن تطابق الشكل المختار حرفيًا.
             for p in range(num_periods):
                 allowed_mode_vars = []
 
                 for k in range(1, max_quran_per_day + 1):
-                    # بداية اليوم: الفترات 1..k
                     if p < k:
                         allowed_mode_vars.append(start_modes[k])
-
-                    # نهاية اليوم: آخر k فترات
                     if p >= num_periods - k:
                         allowed_mode_vars.append(end_modes[k])
 
-                # qvar = 1 إذا وفقط إذا كان الـ mode المختار يغطي هذه الفترة.
                 if allowed_mode_vars:
                     model.Add(
                         day_vars[p] == sum(allowed_mode_vars)
@@ -784,12 +748,8 @@ def generate_timetable():
                 else:
                     model.Add(day_vars[p] == 0)
 
-            # الحد الأقصى اليومي.
             model.Add(sum(day_vars) <= max_quran_per_day)
 
-        # ------------------------------------------------------------
-        # العدد الأسبوعي يجب أن يساوي WeeklyLessons بالضبط.
-        # ------------------------------------------------------------
         all_quran_vars = [
             quran_period_vars[(d, p)]
             for d in range(num_days)
@@ -798,20 +758,7 @@ def generate_timetable():
         model.Add(sum(all_quran_vars) == total_quran_lessons)
 
     # ========================================================
-    # حصص المادة الواحدة لنفس الفصل تكون متتالية في اليوم
-    # ========================================================
-    # القاعدة المطلوبة:
-    # إذا كان للفصل حصتان أو أكثر من نفس المادة في نفس اليوم،
-    # فلا يسمح بوجود فراغ بينهما.
-    # مثال:
-    #   2 حصص رياضيات -> 1,2 أو 3,4 أو 6,7   ✅
-    #   2 حصص رياضيات -> 1,3 أو 2,5         ❌
-    # وينطبق الشرط على أي عدد من الحصص لنفس المادة في اليوم.
-    # ========================================================
-
-    # ========================================================
-    # الإشراف: المعلم المحدد له يوم إشراف يجب أن يأخذ الحصة الأخيرة
-    # في ذلك اليوم. هذا شرط إجباري (Hard Constraint).
+    # الإشراف
     # ========================================================
 
     last_period = num_periods - 1
@@ -838,8 +785,6 @@ def generate_timetable():
             ]
 
             if last_period_vars:
-                # بسبب قيد تعارض المعلم، لا يمكن أن يأخذ أكثر من حصة في نفس الفترة،
-                # ولذلك >= 1 تعني فعليًا حصة أخيرة واحدة على الأقل.
                 model.Add(sum(last_period_vars) >= 1)
             else:
                 model.AddBoolOr([])
@@ -878,30 +823,17 @@ def generate_timetable():
     # ========================================================
     # أوزان القيود المرنة
     # ========================================================
-    SUBJECT_DISTRIBUTION_PENALTY = 45
-    SUBJECT_DAY_SPREAD_BONUS = 90
-    # تم إلغاء شرط/تفضيل الحصص المتتالية للمادة داخل الفصل بناءً على الطلب.
-    # الأولوية الآن لعدالة توزيع المادة على أيام الأسبوع.
     UNWANTED_PERIOD_PENALTY = 40
 
-    # أولوية عدالة توزيع نصاب المعلم على أيام الأسبوع.
-    # هذه أوزان قوية حتى تكون العدالة أهم من تفضيل الحصص المبكرة
-    # أو أي تفضيلات تجميلية أخرى، مع بقاءها Soft وليست Hard.
     TEACHER_ACTIVE_DAY_BONUS = 25000
     TEACHER_LOAD_BALANCE_PENALTY = 100000
-
-    # عدالة توزيع مواد المعلم على أيام الأسبوع.
-    # لا نغير النصاب الأسبوعي الثابت للمعلم؛ فقط نفضل توزيع كل مادة
-    # التي يدرسها على أيام العمل بصورة أكثر عدالة.
     TEACHER_SUBJECT_DAY_BALANCE_PENALTY = 15000
 
-    # تنوع حصص المعلم بين الحصة الأولى والأخيرة.
-    # نكافئ استخدام الحصص المختلفة ونقلل التفاوت الكبير في عدد مرات
-    # وضع المعلم في نفس رقم الحصة خلال الأسبوع.
     TEACHER_PERIOD_DIVERSITY_BONUS = 5000
     TEACHER_PERIOD_BALANCE_PENALTY = 5000
-    # عدالة توزيع المادة داخل الفصل على أيام الأسبوع - أولوية عليا.
-    CLASS_SUBJECT_DAY_BALANCE_PENALTY = 30000
+    
+    # 🌟 تم زيادة وزن عدالة توزيع المادة داخل الفصل بشكل كبير جداً (أولوية قصوى)
+    CLASS_SUBJECT_DAY_BALANCE_PENALTY = 250000
 
 
     # 1. تفضيل الحصص المبكرة
@@ -970,8 +902,6 @@ def generate_timetable():
                 )
                 objective_terms.append(teacher_day_has_lessons[d] * TEACHER_ACTIVE_DAY_BONUS)
 
-        # شرط أولوية: إذا كان نصاب المعلم يكفي لتغطية كل أيام العمل،
-        # فلا نسمح بيوم فراغ غير مبرر له. أيام OffDays مستثناة تلقائيًا.
         teacher_total_lessons = sum(
             item["w"] for item in clean_assignments
             if teacher_name in [x.strip() for x in item["t"].split("/") if x.strip()]
@@ -981,7 +911,6 @@ def generate_timetable():
                 model.Add(teacher_day_has_lessons[d] == 1)
 
     # 4-أ. عدالة توزيع مواد المعلم على مدار الأسبوع.
-    # لكل (معلم، مادة) نقلل التفاوت في عدد حصص المادة بين أيام العمل.
     teacher_subject_groups = {}
     for item in clean_assignments:
         assignment_teachers = [
@@ -1037,9 +966,7 @@ def generate_timetable():
                     diff * (-TEACHER_SUBJECT_DAY_BALANCE_PENALTY)
                 )
 
-    # 4-ب. عدالة توزيع المادة داخل نفس الفصل على أيام الأسبوع.
-    # نقلل التفاوت بين عدد حصص المادة في كل يوم؛ مثلًا 1،1،1،1،2 أفضل
-    # من 0،0،1،1،3 متى كان ذلك ممكنًا، مع احترام القيود الصارمة الأخرى.
+    # 4-ب. عدالة توزيع المادة داخل نفس الفصل على أيام الأسبوع (أولوية مطلقة منعاً للتركز مثل 3 علوم في يوم).
     class_subject_groups = {}
     for item in clean_assignments:
         for class_name in [x.strip() for x in str(item["c"]).split(",") if x.strip()]:
@@ -1071,8 +998,7 @@ def generate_timetable():
                 model.AddAbsEquality(diff, daily_loads[i] - daily_loads[j])
                 objective_terms.append(diff * (-CLASS_SUBJECT_DAY_BALANCE_PENALTY))
 
-    # 4-ب. تنويع أرقام الحصص للمعلم من الأولى حتى الأخيرة.
-    # نفضل ألا يكون المعلم محصورًا في رقم حصة واحد أو رقمين طوال الأسبوع.
+    # 4-ج. تنويع أرقام الحصص للمعلم من الأولى حتى الأخيرة.
     for teacher_name in teachers:
         off_days = teacher_off_days.get(teacher_name, [])
         work_days_indices = [
@@ -1123,7 +1049,6 @@ def generate_timetable():
                 teacher_period_used[p] * TEACHER_PERIOD_DIVERSITY_BONUS
             )
 
-        # تقليل التفاوت بين أرقام الحصص المختلفة.
         for p1 in range(num_periods):
             for p2 in range(p1 + 1, num_periods):
                 diff = model.NewIntVar(
@@ -1138,7 +1063,6 @@ def generate_timetable():
                     diff * (-TEACHER_PERIOD_BALANCE_PENALTY)
                 )
 
-        # موازنة مباشرة بين الحصة الأولى والحصة الأخيرة للمعلم.
         first_last_diff = model.NewIntVar(
             0, num_days * max(1, len(clean_assignments)),
             f"teacher_first_last_diff_{teacher_name}"
@@ -1149,10 +1073,7 @@ def generate_timetable():
         )
         objective_terms.append(first_last_diff * (-10000))
 
-    # 5. تم إلغاء شرط الحصص المتتالية للمادة داخل الفصل.
-    # لا توجد مكافأة أو عقوبة على كون حصص المادة متجاورة.
-
-    # 6. تفادي الحصص غير المفضلة للمعلمين (ساعات الرضاعة)
+    # 6. تفادي الحصص غير المفضلة للمعلمين
     for item in clean_assignments:
         idx = item["idx"]
         c = item["c"]
@@ -1173,16 +1094,11 @@ def generate_timetable():
                                 schedule[(idx, c, s, t, r, d, p)] * (-UNWANTED_PERIOD_PENALTY)
                             )
 
-    # 7. تفضيل ألا يزيد نصاب المعلم اليومي عن 4 حصص قدر الإمكان
-    # هذا شرط مرن (Soft Constraint): إذا تعارض مع القيود الأساسية
-    # أو جعل الجدول غير ممكن، يسمح Solver بأكثر من 4 حصص مع غرامة.
+    # 7. تفضيل ألا يزيد نصاب المعلم اليومي عن 4 حصص
     TEACHER_MAX_DAILY_PREFERRED = 4
     TEACHER_OVERLOAD_PENALTY = 4000
 
-    # 8. عدالة توزيع حصص المعلمين على أيام العمل (أعلى أولوية)
-    # نستخدم غرامة كبيرة للتفاوت بين الأيام حتى يفضل Solver توزيع
-    # النصاب بصورة متقاربة: مثل 1،1،1،1،2 أفضل من 0،1،1،1،3.
-
+    # 8. عدالة توزيع حصص المعلمين على أيام العمل
     for teacher_name in teachers:
         off_days = teacher_off_days.get(teacher_name, [])
         work_days_indices = [
@@ -1213,9 +1129,6 @@ def generate_timetable():
             else:
                 model.Add(teacher_daily_loads[d] == 0)
 
-            # غرامة مرنة على الحصص التي تتجاوز 4 حصص في اليوم.
-            # لا نمنع الحصة الخامسة/السادسة Hard Constraint؛ فقط نجعل Solver
-            # يتجنبها قدر الإمكان، مع الحفاظ على إمكانية إيجاد جدول صالح.
             overload = model.NewIntVar(
                 0, num_periods, f"t_overload_{teacher_name}_{d}"
             )
@@ -1295,7 +1208,6 @@ def generate_timetable():
         out_file = get_path(f"{safe_school_name}_final_timetable.xlsx")
         master_table_file = get_path(f"{safe_school_name}_all_classes.xlsx")
 
-        # القاعات المستخدمة فعليًا
         rooms = sorted({
             str(item.get("r", "")).strip()
             for item in clean_assignments
@@ -1427,14 +1339,12 @@ def generate_timetable():
             ].width = max(max_len + 4, 15)
 
         # --------------------------------------------------------
-        # شيت شامل للمعلمين: صف لكل معلم + الأيام والحصص كأعمدة
-        # مع تلوين كل فصل بلون ثابت لسهولة القراءة.
+        # شيت شامل للمعلمين
         # --------------------------------------------------------
         ws_teachers = wb_master.create_sheet("جداول_المعلمين")
         ws_teachers.sheet_view.rightToLeft = True
         ws_teachers.sheet_view.showGridLines = False
 
-        # ألوان ثابتة للفصول (تتكرر إذا زاد عدد الفصول عن عدد الألوان)
         class_palette = [
             "FFF2CC", "D9EAD3", "CFE2F3", "F4CCCC", "D9D2E9",
             "FCE5CD", "D0E0E3", "EAD1DC", "DDEBF7", "E2F0D9",
@@ -1445,7 +1355,6 @@ def generate_timetable():
         for idx, cls in enumerate(sorted(classes, key=lambda x: str(x))):
             class_colors[str(cls).strip()] = class_palette[idx % len(class_palette)]
 
-        # استخراج أسماء جميع المعلمين
         all_teachers = set()
         for teacher_cell in df_result.get("المدرس", pd.Series(dtype=str)).astype(str):
             for teacher in teacher_cell.split("/"):
@@ -1454,8 +1363,7 @@ def generate_timetable():
                     all_teachers.add(teacher)
         all_teachers = sorted(all_teachers, key=lambda x: str(x))
 
-        # عنوان الجدول
-        fixed_cols = 3  # م - المعلم/ة - المادة
+        fixed_cols = 3
         total_cols = fixed_cols + len(days) * len(periods)
         ws_teachers.merge_cells(
             start_row=1, start_column=1, end_row=1, end_column=total_cols
@@ -1468,7 +1376,6 @@ def generate_timetable():
         title_cell.fill = header_fill
         ws_teachers.row_dimensions[1].height = 34
 
-        # الصف الثاني: أسماء الأيام
         for col in range(1, fixed_cols + 1):
             ws_teachers.merge_cells(start_row=2, start_column=col, end_row=3, end_column=col)
 
@@ -1502,7 +1409,6 @@ def generate_timetable():
                 cell.border = thin_border
             current_col = end_col + 1
 
-        # إعداد بيانات كل معلم مرة واحدة
         teacher_data = {}
         for teacher in all_teachers:
             teacher_df = df_result[
@@ -1512,12 +1418,10 @@ def generate_timetable():
             ].copy()
             teacher_data[teacher] = teacher_df
 
-        # صف لكل معلم
         for teacher_idx, teacher in enumerate(all_teachers, start=1):
             row_num = 3 + teacher_idx
             teacher_df = teacher_data[teacher]
 
-            # المادة/المواد التي يدرسها المعلم
             subjects = []
             for value in teacher_df.get("المادة", pd.Series(dtype=str)).astype(str):
                 value = value.strip()
@@ -1537,7 +1441,6 @@ def generate_timetable():
                 if col == 2:
                     cell.fill = title_fill
 
-            # حصص المعلم
             current_col = fixed_cols + 1
             for day in days:
                 for period in periods:
@@ -1556,23 +1459,19 @@ def generate_timetable():
                         first_class = None
                         for _, item in match.iterrows():
                             cls_text = str(item.get("الفصل", "")).strip()
-                            # إذا كان هناك أكثر من فصل في نفس الحصة، نحاول إظهارهم جميعًا
                             cls_parts = [x.strip() for x in cls_text.split(",") if x.strip()]
                             entries.extend(cls_parts)
                             if first_class is None and cls_parts:
                                 first_class = cls_parts[0]
 
-                        # إزالة التكرار مع الحفاظ على الترتيب
                         unique_entries = list(dict.fromkeys(entries))
                         cell.value = "\n".join(unique_entries)
 
-                        # تلوين الخلية حسب الفصل
                         if len(unique_entries) == 1:
                             color = class_colors.get(unique_entries[0])
                             if color:
                                 cell.fill = PatternFill(fill_type="solid", fgColor=color)
                         elif unique_entries:
-                            # عند وجود أكثر من فصل، استخدم لون الفصل الأول مع خط عريض
                             color = class_colors.get(first_class)
                             if color:
                                 cell.fill = PatternFill(fill_type="solid", fgColor=color)
@@ -1584,19 +1483,14 @@ def generate_timetable():
 
             ws_teachers.row_dimensions[row_num].height = 38
 
-        # أبعاد الأعمدة
         ws_teachers.column_dimensions["A"].width = 6
         ws_teachers.column_dimensions["B"].width = 22
         ws_teachers.column_dimensions["C"].width = 18
         for col_idx in range(fixed_cols + 1, total_cols + 1):
             ws_teachers.column_dimensions[get_column_letter(col_idx)].width = 10
 
-        # تجميد العناوين والأعمدة الثابتة
         ws_teachers.freeze_panes = "D4"
 
-        # --------------------------------------------------------
-        # مفتاح ألوان الفصول أسفل الجدول
-        # --------------------------------------------------------
         legend_start = 5 + len(all_teachers)
         ws_teachers.cell(legend_start, 1, "مفتاح ألوان الفصول")
         ws_teachers.cell(legend_start, 1).font = Font(
@@ -1692,11 +1586,8 @@ def generate_timetable():
                 else:
                     pivot_t = pd.DataFrame(index=days, columns=periods)
 
-                # مهم: pandas قد ينشئ الجدول بنوع float64 عندما تكون كل الخلايا فارغة.
-                # نحوله إلى object قبل إدخال النصوص "راحة" و"إجازة".
                 pivot_t = pivot_t.reindex(index=days, columns=periods).astype(object)
                 
-                # تعبئة أيام الإجازة والراحة
                 for d_idx, day_name in enumerate(days):
                     if day_name in off_days_for_t:
                         for p_col in periods:
@@ -1708,9 +1599,6 @@ def generate_timetable():
 
                 pivot_t.to_excel(writer, sheet_name=f"مدرس_{t}")
 
-            # ====================================================
-            # شيتات القاعات داخل final_timetable.xlsx
-            # ====================================================
             for room in rooms:
                 df_r = df_result[
                     df_result["القاعة"].astype(str).str.strip()
