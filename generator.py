@@ -831,6 +831,13 @@ def generate_timetable():
     for (class_name, subject_key), group in subject_by_class.items():
         subject_items = group["items"]
 
+        # شرط التتابع يطبق فقط إذا كان إجمالي حصص المادة لهذا الفصل
+        # في الأسبوع أكبر من 6 حصص. المواد التي لها 6 حصص أو أقل
+        # تظل حصصها موزعة وبدون إجبار على التتابع.
+        weekly_subject_lessons = sum(int(item.get("w", 0) or 0) for item in subject_items)
+        if weekly_subject_lessons <= 6:
+            continue
+
         for d in range(num_days):
             subject_period_vars = []
 
@@ -1134,7 +1141,13 @@ def generate_timetable():
                                 schedule[(idx, c, s, t, r, d, p)] * (-UNWANTED_PERIOD_PENALTY)
                             )
 
-    # 7. عدالة توزيع حصص المعلمين على أيام العمل (تقليل التباين بين الأيام)
+    # 7. تفضيل ألا يزيد نصاب المعلم اليومي عن 4 حصص قدر الإمكان
+    # هذا شرط مرن (Soft Constraint): إذا تعارض مع القيود الأساسية
+    # أو جعل الجدول غير ممكن، يسمح Solver بأكثر من 4 حصص مع غرامة.
+    TEACHER_MAX_DAILY_PREFERRED = 4
+    TEACHER_OVERLOAD_PENALTY = 1500
+
+    # 8. عدالة توزيع حصص المعلمين على أيام العمل (تقليل التباين بين الأيام)
     TEACHER_LOAD_BALANCE_PENALTY = 40  # غرامة التفاوت بين أيام المعلم الواحد
 
     for teacher_name in teachers:
@@ -1166,6 +1179,16 @@ def generate_timetable():
                 model.Add(teacher_daily_loads[d] == sum(day_lessons))
             else:
                 model.Add(teacher_daily_loads[d] == 0)
+
+            # غرامة مرنة على الحصص التي تتجاوز 4 حصص في اليوم.
+            # لا نمنع الحصة الخامسة/السادسة Hard Constraint؛ فقط نجعل Solver
+            # يتجنبها قدر الإمكان، مع الحفاظ على إمكانية إيجاد جدول صالح.
+            overload = model.NewIntVar(
+                0, num_periods, f"t_overload_{teacher_name}_{d}"
+            )
+            model.Add(overload >= teacher_daily_loads[d] - TEACHER_MAX_DAILY_PREFERRED)
+            model.Add(overload >= 0)
+            objective_terms.append(overload * (-TEACHER_OVERLOAD_PENALTY))
 
         for i in range(len(work_days_indices)):
             for j in range(i + 1, len(work_days_indices)):
